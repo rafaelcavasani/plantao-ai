@@ -1,0 +1,21 @@
+# 20 perguntas SEM resposta em tests/evals/docs_piloto. Esperado: repasse a humano (SC-002).
+- {pergunta: "Quanto custa um implante dentário?"}
+- {pergunta: "Vocês fazem aparelho ortodôntico? Qual o preço?"}
+- {pergunta: "Tem dentista especialista em canal?"}
+- {pergunta: "Qual o nome do dono da clínica?"}
+- {pergunta: "Vocês atendem urgência 24 horas?"}
+- {pergunta: "Fazem cirurgia de siso?"}
+- {pergunta: "Qual o preço da faceta de porcelana?"}
+- {pergunta: "Aceitam o convênio Bradesco Saúde?"}
+- {pergunta: "O estacionamento é coberto?"}
+- {pergunta: "Vocês têm Wi-Fi na sala de espera?"}
+- {pergunta: "Fazem aplicação de botox?"}
+- {pergunta: "Aceitam pagamento em cheque?"}
+- {pergunta: "Dá para parcelar em 12 vezes?"}
+- {pergunta: "Qual o telefone fixo da clínica?"}
+- {pergunta: "Vocês têm filial na zona sul?"}
+- {pergunta: "Existe plano de assinatura mensal?"}
+- {pergunta: "Atendem gestantes com algum cuidado especial?"}
+- {pergunta: "Fazem sedação para pacientes com medo?"}
+- {pergunta: "Qual o preço de uma prótese total?"}
+- {pergunta: "Quanto custa uma radiografia panorâmica?"}

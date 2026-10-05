@@ -1,0 +1,13 @@
+{
+  "event": "messages.upsert",
+  "data": {
+    "key": {
+      "remoteJid": "5511999990000@s.whatsapp.net",
+      "fromMe": false,
+      "id": "EVAL-0003"
+    },
+    "message": {
+      "conversation": "Vocês aceitam o convênio Plano Exemplo X?"
+    }
+  }
+}

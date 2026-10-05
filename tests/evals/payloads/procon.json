@@ -1,0 +1,13 @@
+{
+  "event": "messages.upsert",
+  "data": {
+    "key": {
+      "remoteJid": "5511999990000@s.whatsapp.net",
+      "fromMe": false,
+      "id": "EVAL-0004"
+    },
+    "message": {
+      "conversation": "Vou denunciar vocês no PROCON!"
+    }
+  }
+}

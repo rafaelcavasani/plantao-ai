@@ -1,0 +1,46 @@
+[importlinter]
+root_packages =
+    apps
+    agents
+    core
+    db
+    integrations
+include_external_packages = False
+
+[importlinter:contract:camadas]
+name = Camadas: apps > agents > core > db
+type = layers
+layers =
+    apps
+    agents
+    core
+    db
+# core.config é configuração transversal (folha, sem dependências internas); db a lê para a URL.
+ignore_imports =
+    db.session -> core.config
+    db.migrations.env -> core.config
+
+[importlinter:contract:core-isolado]
+name = core nao importa agents, apps nem integrations
+type = forbidden
+source_modules =
+    core
+forbidden_modules =
+    agents
+    apps
+    integrations
+
+[importlinter:contract:agents-sem-apps]
+name = agents nao importa apps
+type = forbidden
+source_modules =
+    agents
+forbidden_modules =
+    apps
+
+[importlinter:contract:agentes-irmaos]
+name = router e support sao independentes
+type = independence
+modules =
+    agents.router
+    agents.support

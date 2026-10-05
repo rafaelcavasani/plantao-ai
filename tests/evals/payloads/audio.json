@@ -1,0 +1,16 @@
+{
+  "event": "messages.upsert",
+  "data": {
+    "key": {
+      "remoteJid": "5511999990000@s.whatsapp.net",
+      "fromMe": false,
+      "id": "EVAL-0006"
+    },
+    "message": {
+      "audioMessage": {
+        "url": "https://exemplo.invalid/audio.ogg",
+        "seconds": 4
+      }
+    }
+  }
+}

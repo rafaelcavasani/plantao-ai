@@ -1,0 +1,32 @@
+# 30 perguntas cuja resposta está em tests/evals/docs_piloto (SC-001).
+# `esperado`: trechos que precisam aparecer na resposta (sem acento, minúsculas). Todos são exigidos.
+- {pergunta: "Que horas vocês abrem no sábado?", esperado: ["12"]}
+- {pergunta: "Qual o horário de funcionamento de segunda a sexta?", esperado: ["18"]}
+- {pergunta: "Vocês abrem no domingo?", esperado: ["fechado"]}
+- {pergunta: "Qual o horário de atendimento aos sábados?", esperado: ["12"]}
+- {pergunta: "A clínica funciona em feriados?", esperado: ["avisa"]}
+- {pergunta: "Onde fica a clínica?", esperado: ["acacias"]}
+- {pergunta: "Tem estacionamento?", esperado: ["gratuito"]}
+- {pergunta: "Vocês atendem convênio?", esperado: ["odonto vida"]}
+- {pergunta: "Quais convênios vocês aceitam?", esperado: ["sorriso saude"]}
+- {pergunta: "Posso pagar no cartão de crédito?", esperado: ["6"]}
+- {pergunta: "Aceitam Pix?", esperado: ["pix"]}
+- {pergunta: "Como faço para agendar uma consulta?", esperado: ["recepcao"]}
+- {pergunta: "A primeira avaliação é cobrada?", esperado: ["gratuita"]}
+- {pergunta: "Quanto custa a limpeza dental?", esperado: ["150"]}
+- {pergunta: "Qual o preço do clareamento a laser?", esperado: ["1.200"]}
+- {pergunta: "Quanto é uma restauração simples?", esperado: ["220"]}
+- {pergunta: "Qual o valor de uma extração simples?", esperado: ["280"]}
+- {pergunta: "Quanto custa a aplicação de flúor?", esperado: ["90"]}
+- {pergunta: "Quanto é a consulta de retorno?", esperado: ["80"]}
+- {pergunta: "Tem desconto para pagamento à vista?", esperado: ["10%"]}
+- {pergunta: "Posso cancelar uma consulta sem pagar nada?", esperado: ["24"]}
+- {pergunta: "Qual a multa se eu cancelar de última hora?", esperado: ["50%"]}
+- {pergunta: "Qual a tolerância de atraso?", esperado: ["15"]}
+- {pergunta: "Menor de 18 anos precisa de acompanhante?", esperado: ["responsavel"]}
+- {pergunta: "Quais documentos devo levar na primeira consulta?", esperado: ["foto"]}
+- {pergunta: "A restauração tem garantia?", esperado: ["6 meses"]}
+- {pergunta: "Se eu usar convênio, o que preciso levar?", esperado: ["carteirinha"]}
+- {pergunta: "Posso remarcar a consulta?", esperado: ["24"]}
+- {pergunta: "Quantas parcelas posso fazer no cartão?", esperado: ["6"]}
+- {pergunta: "Para valores acima de quanto o parcelamento sem juros vale?", esperado: ["300"]}

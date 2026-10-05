@@ -1,0 +1,52 @@
+# 50 mensagens rotuladas para medir a acurácia do Roteador (SC-005).
+# `secundaria` é opcional e só documenta mensagens com mais de uma intenção.
+- {mensagem: "Que horas vocês abrem no sábado?", intencao: suporte}
+- {mensagem: "Vocês atendem por convênio?", intencao: suporte}
+- {mensagem: "Onde fica a clínica?", intencao: suporte}
+- {mensagem: "Quais formas de pagamento vocês aceitam?", intencao: suporte}
+- {mensagem: "Tem estacionamento no local?", intencao: suporte}
+- {mensagem: "A primeira consulta é gratuita?", intencao: suporte}
+- {mensagem: "Qual o prazo para cancelar sem custo?", intencao: suporte}
+- {mensagem: "Preciso levar algum documento na primeira consulta?", intencao: suporte}
+- {mensagem: "Quanto custa uma limpeza dental?", intencao: suporte}
+- {mensagem: "Vocês abrem em feriado?", intencao: suporte}
+- {mensagem: "Menor de idade pode ir sozinho?", intencao: suporte}
+- {mensagem: "A restauração tem garantia?", intencao: suporte}
+- {mensagem: "Quero contratar o clareamento a laser", intencao: venda}
+- {mensagem: "Pode me passar um orçamento de implante?", intencao: venda}
+- {mensagem: "Quero fechar o pacote de limpeza e flúor", intencao: venda}
+- {mensagem: "Vocês fazem parcelamento? Quero começar o tratamento", intencao: venda}
+- {mensagem: "Tenho interesse em fazer lentes de contato dental", intencao: venda}
+- {mensagem: "Quanto fica o aparelho ortodôntico? Quero fechar hoje", intencao: venda}
+- {mensagem: "Quero comprar um plano odontológico da clínica", intencao: venda}
+- {mensagem: "Gostaria de contratar o serviço de clareamento para minha família toda", intencao: venda}
+- {mensagem: "Me manda a proposta do tratamento completo", intencao: venda}
+- {mensagem: "Quero fazer um orçamento de prótese", intencao: venda}
+- {mensagem: "Quero marcar uma consulta para terça", intencao: agendamento}
+- {mensagem: "Preciso remarcar minha limpeza de quinta", intencao: agendamento}
+- {mensagem: "Tem horário livre amanhã de manhã?", intencao: agendamento}
+- {mensagem: "Quero cancelar a consulta de sexta", intencao: agendamento}
+- {mensagem: "Consigo agendar para o sábado às 9h?", intencao: agendamento}
+- {mensagem: "Vou me atrasar 20 minutos, dá pra remarcar?", intencao: agendamento}
+- {mensagem: "Preciso agendar um retorno para a semana que vem", intencao: agendamento}
+- {mensagem: "Pode marcar minha avaliação para segunda à tarde?", intencao: agendamento}
+- {mensagem: "Quero antecipar minha consulta, tem vaga hoje?", intencao: agendamento}
+- {mensagem: "Marca para mim e para minha filha no mesmo horário", intencao: agendamento}
+- {mensagem: "Cadê o boleto da minha parcela?", intencao: cobranca}
+- {mensagem: "Paguei a fatura mas continua aparecendo em aberto", intencao: cobranca}
+- {mensagem: "Quero renegociar a minha dívida com a clínica", intencao: cobranca}
+- {mensagem: "Pode reenviar o link de pagamento do tratamento?", intencao: cobranca}
+- {mensagem: "Fui cobrado duas vezes no cartão", intencao: cobranca}
+- {mensagem: "Preciso da segunda via do boleto vencido", intencao: cobranca}
+- {mensagem: "Quanto falta pagar do meu tratamento?", intencao: cobranca}
+- {mensagem: "Quero parcelar o valor que estou devendo", intencao: cobranca}
+- {mensagem: "Meu pagamento de ontem já foi confirmado?", intencao: cobranca}
+- {mensagem: "Oi", intencao: outro}
+- {mensagem: "Bom dia!", intencao: outro}
+- {mensagem: "Quem ganhou o jogo ontem?", intencao: outro}
+- {mensagem: "Vocês indicam alguma pizzaria perto?", intencao: outro}
+- {mensagem: "Obrigado, tenha um ótimo dia", intencao: outro}
+- {mensagem: "asdkjh qwe", intencao: outro}
+- {mensagem: "Qual a previsão do tempo para amanhã?", intencao: outro}
+- {mensagem: "Estou testando este número", intencao: outro}
+- {mensagem: "Quero marcar uma consulta e saber se aceitam convênio", intencao: agendamento, secundaria: suporte}

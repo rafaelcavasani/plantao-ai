@@ -1,0 +1,51 @@
+[project]
+name = "plantao-ai"
+version = "0.2.0"
+description = "Núcleo multi-tenant de agentes de IA para automação de PMEs (Plantão.AI)."
+requires-python = ">=3.11"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["skills", ".specify", ".datacode", "node_modules"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "ASYNC"]
+# B008: Depends()/Header() em defaults é o padrão do FastAPI. E501: o formatador cuida do código;
+# docstrings e prompts longos são aceitos.
+ignore = ["B008", "E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"db/migrations/**" = ["E501"]
+"tests/**" = ["E501"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+files = ["core", "agents", "db", "apps", "integrations", "scripts"]
+plugins = ["pydantic.mypy"]
+exclude = ["db/migrations/"]
+
+[[tool.mypy.overrides]]
+module = ["pgvector.*", "arq.*", "langgraph.*", "pypdf.*", "langchain_text_splitters.*", "yaml.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+markers = [
+    "integration: exige Postgres e Redis do docker-compose",
+    "adversarial: casos adversariais de segurança (SC-003)",
+]
+
+[tool.coverage.run]
+source = ["core", "agents", "db", "apps", "integrations"]
+# greenlet: o SQLAlchemy async executa o código do handler em greenlets; sem isso o coverage perde linhas.
+concurrency = ["thread", "greenlet"]
+omit = ["db/migrations/*", "*/__init__.py"]
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true
+
