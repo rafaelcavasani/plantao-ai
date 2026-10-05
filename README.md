@@ -47,6 +47,319 @@ apps  >  agents  >  core  >  db
 - `db/` — modelos, sessão com RLS, repositórios e migrações.
 - `scripts/` — `seed_tenant`, `ingest_docs`, `run_evals`.
 
+## Arquitetura e funcionamento
+
+Os diagramas abaixo descrevem o estado atual do código (Sprint 2). Eles usam [Mermaid](https://mermaid.js.org/), renderizado nativamente pelo GitHub e pelo VS Code (extensão Markdown Preview Mermaid Support).
+
+### 1. Visão geral e integrações
+
+O cliente final fala com a Evolution API, que entrega a mensagem à API do Plantão.AI por webhook. A API só valida, persiste e enfileira; todo o trabalho com LLM acontece no worker. O OpenRouter é o único caminho para modelos (chat e embeddings). A Evolution API é o único canal de saída para o WhatsApp.
+
+```mermaid
+flowchart LR
+    CLI(["Cliente final<br/>WhatsApp"])
+    HUM(["Atendente humano<br/>fora do sistema no Sprint 2"])
+    subgraph EXT["Sistemas externos"]
+        EVO["Evolution API<br/>gateway WhatsApp"]
+        OR["OpenRouter<br/>chat e embeddings"]
+        LS["LangSmith<br/>opcional"]
+    end
+    subgraph PLANTAO["Plantão.AI"]
+        API["API FastAPI<br/>POST /webhooks/whatsapp<br/>GET /health"]
+        REDIS[("Redis<br/>fila arq e rate limit")]
+        WRK["Worker arq<br/>processar_mensagem"]
+        GRAFO["Orquestrador LangGraph<br/>Guardrails, Roteador, Suporte"]
+        PG[("PostgreSQL 16 + pgvector<br/>RLS por tenant")]
+        OPS["CLIs do operador<br/>seed_tenant, ingest_docs, run_evals"]
+    end
+    CLI -->|"mensagem"| EVO
+    EVO -->|"webhook messages.upsert<br/>header X-Webhook-Token"| API
+    API -->|"1. rate limit"| REDIS
+    API -->|"2. persiste mensagem"| PG
+    API -->|"3. enfileira"| REDIS
+    REDIS -->|"consome job"| WRK
+    WRK -->|"le e grava"| PG
+    WRK --> GRAFO
+    GRAFO -->|"chat JSON e embeddings"| OR
+    GRAFO -->|"busca vetorial"| PG
+    WRK -->|"sendText"| EVO
+    EVO -->|"resposta"| CLI
+    OPS -->|"embeddings"| OR
+    OPS -->|"documentos, tenant"| PG
+    GRAFO -.->|"traces"| LS
+    PG -.->|"handoff_log"| HUM
+```
+
+| Sistema | Papel | Configuração |
+|---|---|---|
+| Evolution API | Recebe e envia mensagens do WhatsApp. Envio por `POST /message/sendText/{instancia}` com header `apikey`. | `WHATSAPP_BASE_URL`, `WHATSAPP_API_KEY`, `WHATSAPP_INSTANCE` |
+| OpenRouter | Chat (`/chat/completions`, JSON, temperatura 0) e embeddings (`/embeddings`). Timeout de 15 s e 1 retry com backoff de 1 s, só em erro de rede, timeout ou 5xx. | `OPENROUTER_API_KEY`, `MODEL_CHEAP`, `MODEL_STRONG`, `EMBEDDING_MODEL` |
+| Redis | Fila do arq e contador de rate limit (`rl:{tenant}:{minuto}`, expira em 90 s). | `REDIS_URL`, `RATE_LIMIT_MSGS_PER_MIN` |
+| PostgreSQL | Dados dos tenants, conversas, base de conhecimento (pgvector, índice HNSW) e custo de LLM. Acesso pelo papel `plantao_app`, com RLS. | `DATABASE_URL`, `DATABASE_ADMIN_URL` |
+| LangSmith | Traces, ligado só se houver chave. | `LANGSMITH_API_KEY`, `LANGSMITH_PROJECT` |
+
+Nesta entrega o repasse humano consiste em avisar o cliente, marcar a conversa como `handoff` e registrar o motivo em `handoff_log`. Não há fila nem painel de atendentes (Sprint 5).
+
+### 2. Ciclo de vida de uma mensagem
+
+A API responde ao webhook em milissegundos, sem chamar LLM. O worker executa em quatro fases e nunca segura uma transação de banco durante chamadas externas. A idempotência vem de dois pontos: `external_id` único na entrada e índice único em `messages.responde_a` na saída, mais o `_job_id` igual ao id da mensagem no arq.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor C as Cliente
+    participant E as Evolution API
+    participant A as API FastAPI
+    participant R as Redis
+    participant P as PostgreSQL
+    participant W as Worker arq
+    participant G as Grafo LangGraph
+    participant O as OpenRouter
+
+    C->>E: envia mensagem
+    E->>A: POST /webhooks/whatsapp
+    alt token invalido
+        A-->>E: 401
+    else payload ignorado: fromMe, grupo, status
+        A-->>E: 200 ignored
+    else limite por minuto excedido
+        A->>R: INCR janela do tenant
+        A-->>E: 200 rate_limited
+    else mensagem valida
+        A->>P: conversa get-or-create, contato hash e Fernet
+        A->>P: insere mensagem, external_id unico
+        alt external_id repetido
+            A-->>E: 200 duplicate
+        else nova
+            A->>R: enqueue processar_mensagem, job_id igual ao message_id
+            A-->>E: 200 queued
+        end
+    end
+
+    R->>W: entrega job, max_tries 3, timeout 120 s
+    Note over W,P: Fase 1: leitura em transacao curta
+    W->>P: mensagem, resposta existente, conversa, config, historico
+    alt conversa em handoff dentro do TTL
+        W-->>R: encerra com handoff_ativo
+    else segue
+        Note over W,G: Fase 2: grafo sem transacao aberta
+        W->>G: executar entrada, config
+        G->>O: roteador, modelo barato
+        G->>O: embedding da pergunta
+        G->>P: top 4 trechos por similaridade
+        G->>O: suporte, modelo forte
+        G-->>W: Decisao responder ou handoff
+        Note over W,P: Fase 3: grava decisao e resposta pendente
+        W->>P: mensagem, handoff_log, status_envio pendente
+        Note over W,E: Fase 4: envio
+        W->>E: POST /message/sendText/instancia
+        E->>C: entrega resposta
+        W->>P: status_envio enviada ou falha
+    end
+```
+
+Códigos de retorno do job: `respondida`, `handoff`, `ja_respondida`, `handoff_ativo` e `mensagem_inexistente`. Se o envio falha, a resposta fica gravada com `status_envio = falha`.
+
+### 3. Orquestrador de agentes (LangGraph)
+
+O grafo tem cinco nós em série. Qualquer nó pode encerrar o fluxo com uma decisão de `handoff`, e nenhuma resposta chega ao cliente sem passar pelos guardrails de saída. Os textos enviados em handoff são fixos, sem LLM. O Roteador e o Suporte são independentes entre si (contrato do import-linter) e só se comunicam pelo estado do grafo.
+
+```mermaid
+flowchart TD
+    START(["Mensagem do lead"]) --> ENT["Nó entrada<br/>guardrails de entrada<br/>sem LLM"]
+    ENT -->|"nao_texto, mensagem_vazia,<br/>palavra_gatilho:termo"| HO
+    ENT -->|"aprovada"| ROT["Nó roteador<br/>modelo barato, temperatura 0<br/>ultimos 6 turnos"]
+    ROT -->|"LLMError ou SaidaInvalida"| HO
+    ROT --> DEC{"Confianca menor que<br/>router_confidence_threshold?"}
+    DEC -->|"sim: trata como suporte"| SUP
+    DEC -->|"nao"| INT{"Intencao"}
+    INT -->|"suporte"| SUP
+    INT -->|"venda, agendamento,<br/>cobranca, outro"| HO
+    SUP["Nó suporte<br/>embedding, busca top 4,<br/>min_similarity, resposta"]
+    SUP -->|"falha_embedding, falha_llm"| HO
+    SUP -->|"sem trechos ou responde=false:<br/>sem_resposta_na_base"| HO
+    SUP -->|"resposta com citacoes<br/>confianca = min LLM, similaridade"| GS["Nó guardrails de saida<br/>funcoes puras"]
+    GS -->|"confianca_abaixo_do_minimo<br/>topico_proibido:termo<br/>desconto_acima_do_limite<br/>valor_nao_fundamentado:valor"| HO
+    GS -->|"aprovada"| RESP["Nó responder<br/>Decisao responder"]
+    HO["Decisao handoff<br/>texto fixo + motivo"]
+    RESP --> FIM(["Worker grava e envia"])
+    HO --> FIM
+```
+
+| Agente ou nó | Modelo | O que faz |
+|---|---|---|
+| Guardrails de entrada | nenhum | Reprova mensagem não textual (áudio, imagem), vazia ou só com emoji, e mensagem com palavra-gatilho do tenant (ex.: "procon", "advogado"). |
+| Roteador | `MODEL_CHEAP` | Classifica a intenção em `suporte`, `venda`, `agendamento`, `cobranca` ou `outro`, com confiança e intenções secundárias. Usa as últimas 6 mensagens. Confiança abaixo do limiar do tenant é tratada como `suporte`. |
+| Suporte | `MODEL_STRONG` + embeddings | Busca até 4 trechos do tenant com similaridade mínima, responde só com base neles, cita os trechos usados (máx. 600 caracteres) e informa a confiança. A confiança final é o menor valor entre a do LLM e a derivada da similaridade (linear de 0,30 a 0,60). |
+| Guardrails de saída | nenhum | Em ordem: confiança mínima, tópico proibido, desconto acima do limite e valor (dinheiro, percentual, horário) que não aparece nos trechos recuperados. |
+
+### 4. Ingestão da base de conhecimento
+
+O operador carrega os documentos do tenant pela CLI. Os embeddings são calculados fora da transação e a troca de versão é atômica: o documento novo entra inteiro ou o anterior permanece. O conteúdo do arquivo é tratado só como dado e nunca é registrado em logs.
+
+```mermaid
+flowchart TD
+    OP(["Operador"]) -->|"ingest_docs load caminho"| EXT["Extrai texto<br/>md, txt, pdf via pypdf"]
+    EXT -->|"maior que 5 MB"| F1["arquivo_grande"]
+    EXT -->|"formato desconhecido"| F2["nao_suportado"]
+    EXT -->|"sem texto"| F3["sem_texto"]
+    EXT --> CH["Divide em trechos<br/>800 caracteres, overlap 100"]
+    CH --> H{"sha256 igual ao<br/>documento atual?"}
+    H -->|"sim"| INAL["inalterado"]
+    H -->|"nao"| EMB["Embeddings em lotes de 64<br/>fora da transacao"]
+    EMB -->|"OpenRouter /embeddings"| OR(["OpenRouter"])
+    EMB -->|"LLMError"| F4["falha"]
+    EMB --> TX["Transação atomica<br/>trava documento, apaga trechos antigos,<br/>versao + 1, insere trechos com vetor"]
+    TX --> PG[("knowledge_documents<br/>tenant_knowledge<br/>indice HNSW")]
+    TX --> OK["ok"]
+```
+
+### 5. Estados da conversa
+
+Uma conversa em `handoff` não recebe resposta automática até `HANDOFF_TTL_MINUTES` após o repasse ou a última mensagem humana. Depois disso volta a `aberta` e o Roteador assume de novo. Mensagens do mesmo contato dentro de `CONVERSATION_REUSE_HOURS` reaproveitam a conversa.
+
+```mermaid
+stateDiagram-v2
+    [*] --> aberta: primeira mensagem do contato<br/>ou janela de reuso expirada
+    aberta --> aberta: respondida pelo suporte<br/>agente_atual = support
+    aberta --> handoff: guardrail, intencao sem agente,<br/>falha de LLM ou sem resposta
+    handoff --> handoff: nova mensagem dentro do TTL<br/>sem resposta automatica
+    handoff --> aberta: TTL expirado<br/>agente_atual = router
+```
+
+Motivos gravados em `handoff_log.motivo`:
+
+| Motivo | Origem |
+|---|---|
+| `nao_texto`, `mensagem_vazia`, `palavra_gatilho:<termo>` | Guardrails de entrada |
+| `intencao_sem_agente:<intencao>` | Roteador (venda, agendamento, cobrança, outro) |
+| `sem_resposta_na_base` | Suporte (nenhum trecho acima da similaridade mínima, ou o modelo declarou não saber) |
+| `falha_llm`, `falha_embedding` | Erro, timeout ou JSON inválido do OpenRouter após o retry |
+| `confianca_abaixo_do_minimo`, `topico_proibido:<termo>`, `desconto_acima_do_limite`, `valor_nao_fundamentado:<valor>` | Guardrails de saída |
+
+### 6. Camadas, segurança e multi-tenancy
+
+As dependências só apontam para baixo (`apps > agents > core > db`), e `core` nunca importa `agents`, `apps` ou `integrations`. O import-linter reprova o build se isso mudar. O canal WhatsApp implementa a porta `MessageChannel` definida em `core/ports`, então trocar de provedor não toca no núcleo.
+
+```mermaid
+flowchart TB
+    subgraph APPS["apps"]
+        direction LR
+        API["api<br/>webhook, deps, ratelimit"]
+        WRK["worker<br/>jobs, settings"]
+        COMP["composition<br/>monta LLM e canal"]
+    end
+    subgraph AGENTS["agents"]
+        direction LR
+        ORQ["orchestrator<br/>grafo, estado"]
+        RT["router"]
+        SP["support"]
+    end
+    subgraph CORE["core"]
+        direction LR
+        GR["guardrails"]
+        HF["handoff"]
+        LLM["llm<br/>OpenRouter, registro"]
+        RAG["rag<br/>chunking, ingest, retrieve"]
+        SEC["security<br/>Fernet, HMAC, PII"]
+        OBS["observability"]
+        PORTS["ports"]
+    end
+    subgraph DB["db"]
+        direction LR
+        SES["session.tenant_session<br/>set_config app.tenant_id"]
+        MOD["models, repositories"]
+    end
+    INT["integrations<br/>whatsapp"]
+    PGR[("PostgreSQL<br/>papel plantao_app<br/>RLS ativo")]
+    APPS --> AGENTS --> CORE --> DB
+    APPS --> INT
+    INT -.->|"implementa"| PORTS
+    SES --> PGR
+```
+
+- **Isolamento por tenant.** Todo acesso a dados passa por `tenant_session`, que define `app.tenant_id` na transação. As políticas de RLS do Postgres filtram as linhas por esse valor, e sem tenant definido a consulta devolve zero linhas. A aplicação conecta com o papel `plantao_app` (sem superusuário e sem `BYPASSRLS`). O superusuário só roda migrações e o seed.
+- **PII.** O telefone do contato é guardado criptografado (Fernet, `PII_ENCRYPTION_KEY`) e com hash HMAC (`PII_HASH_KEY`) para localizar a conversa. Os logs são JSON, mascaram telefone e mensagem e nunca registram o payload do webhook.
+- **Autenticação do webhook.** Header `X-Webhook-Token` comparado em tempo constante com `WHATSAPP_WEBHOOK_SECRET`. Token inválido retorna 401.
+- **Tenant do Sprint 2.** `get_tenant_id` devolve sempre o tenant piloto (`PILOT_TENANT_ID`). A resolução por número de destino é do Sprint 3.
+- **Observabilidade.** Cada chamada ao OpenRouter grava uma linha em `llm_calls` (finalidade, modelo, tokens, custo em USD, latência e erro), inclusive as que falham. Os logs carregam `correlation_id`, `tenant_id` e `conversation_id`.
+
+### 7. Modelo de dados
+
+O diagrama mostra as tabelas usadas no Sprint 2 e as colunas principais. As tabelas `leads`, `appointments`, `billing_events` e `usage_metrics` existem desde o Sprint 1, mas só serão usadas nos sprints seguintes. Todas as tabelas com dados de tenant têm RLS.
+
+```mermaid
+erDiagram
+    tenants ||--|| tenant_config : "configura"
+    tenants ||--o{ knowledge_documents : "possui"
+    knowledge_documents ||--o{ tenant_knowledge : "trechos com embedding"
+    tenants ||--o{ conversations : "atende"
+    conversations ||--o{ messages : "contem"
+    messages |o--o| messages : "responde_a unico"
+    conversations ||--o{ handoff_log : "repasses"
+    tenants ||--o{ llm_calls : "custo e latencia"
+    tenants {
+        uuid id PK
+        string nome_empresa
+        string nicho
+        string status
+    }
+    tenant_config {
+        uuid tenant_id PK
+        string tom_de_voz
+        json horario_funcionamento
+        float limite_desconto_percentual
+        json topicos_proibidos
+        json palavras_gatilho
+        float confianca_minima_handoff
+        float router_confidence_threshold
+        float min_similarity
+    }
+    conversations {
+        uuid id PK
+        uuid tenant_id FK
+        string contato_hash
+        bytes contato_enc
+        string status
+        string agente_atual
+        datetime handoff_em
+    }
+    messages {
+        uuid id PK
+        uuid tenant_id FK
+        string remetente
+        string tipo
+        string intencao
+        uuid responde_a UK
+        string status_envio
+    }
+    handoff_log {
+        uuid id PK
+        string motivo
+        float confianca_no_momento
+    }
+    llm_calls {
+        uuid id PK
+        string finalidade
+        string modelo
+        int tokens_entrada
+        int tokens_saida
+        decimal custo_usd
+        int latencia_ms
+    }
+    knowledge_documents {
+        uuid id PK
+        string nome_origem
+        string content_hash
+        int versao
+    }
+    tenant_knowledge {
+        uuid id PK
+        text chunk_texto
+        vector embedding
+    }
+```
+
 ## Como rodar localmente
 
 Todos os comandos a partir de `plantao-ai/`.
