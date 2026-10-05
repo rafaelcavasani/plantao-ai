@@ -8,17 +8,24 @@ from decimal import Decimal
 from typing import Any
 
 import pytest
+import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from agents.orchestrator.graph import Grafo
 from apps.worker.jobs import processar_mensagem
 from core.llm.openrouter import OpenRouterClient
+from tests.conftest import criar_conexao
 from tests.fakes.channel import FakeChannel
 from tests.fakes.conhecimento import inserir_conhecimento, json_roteador, json_suporte
 from tests.fakes.openrouter import OpenRouterFalso
 from tests.fakes.pipeline import consultar, receber
 
 BASE = {"faq.md": ["Horário de atendimento: aos sábados abrimos das 8h às 12h."]}
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _conexao_a(db: AsyncEngine, tenant_a: uuid.UUID) -> None:
+    await criar_conexao(db, tenant_a, instance_name="inst-a")
 
 
 async def _sem_espera(_: float) -> None:

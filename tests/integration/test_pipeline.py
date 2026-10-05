@@ -6,12 +6,13 @@ import asyncio
 import uuid
 
 import pytest
+import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from apps.worker.jobs import processar_mensagem
-from core.config import settings
 from core.handoff.textos import TEXTO_HANDOFF, TEXTO_NAO_TEXTO
 from core.llm.ports import Finalidade, LLMError
+from tests.conftest import ConexaoCriada, criar_conexao, criar_tenant
 from tests.fakes.channel import FakeChannel
 from tests.fakes.conhecimento import inserir_conhecimento, json_roteador, json_suporte
 from tests.fakes.llm import FakeLLMClient
@@ -24,6 +25,13 @@ BASE = {
     ]
 }
 RESPOSTA = "Aos sábados atendemos das 8h às 12h."
+TTL_PADRAO = 60  # minutos; vem de tenant_config.handoff_ttl_minutos
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def conexao_a(db: AsyncEngine, tenant_a: uuid.UUID) -> ConexaoCriada:
+    """Toda empresa precisa de uma conexão de canal para a resposta sair."""
+    return await criar_conexao(db, tenant_a, instance_name="inst-a")
 
 
 async def _preparar(db: AsyncEngine, tenant: uuid.UUID) -> None:
@@ -124,20 +132,60 @@ async def test_job_de_um_tenant_nao_enxerga_mensagem_de_outro(
 
 
 # --- Falhas de envio --------------------------------------------------------------------------
-async def test_falha_no_envio_mantem_a_resposta_com_status_falha(
+async def test_falha_no_envio_mantem_a_resposta_e_vira_handoff_falha_canal(
     db: AsyncEngine, tenant_a: uuid.UUID
 ) -> None:
     await _preparar(db, tenant_a)
-    mid, _ = await receber(tenant_a)
-    assert (
-        await _job(tenant_a, mid, contexto(_llm_feliz(), FakeChannel(falhar=True))) == "respondida"
-    )
+    mid, cid = await receber(tenant_a)
+    resultado = await _job(tenant_a, mid, contexto(_llm_feliz(), FakeChannel(falhar=True)))
+    assert resultado == "falha_canal"
     resposta = (
         await consultar(
             db, "SELECT conteudo, status_envio FROM messages WHERE responde_a = :m", m=mid
         )
     )[0]
     assert resposta.conteudo == RESPOSTA and resposta.status_envio == "falha"
+    log = (await consultar(db, "SELECT motivo, message_id FROM handoff_log"))[0]
+    assert log.motivo == "falha_canal" and log.message_id == mid
+    conversa = (
+        await consultar(db, "SELECT status, agente_atual FROM conversations WHERE id = :c", c=cid)
+    )[0]
+    assert (conversa.status, conversa.agente_atual) == ("handoff", "humano")
+
+
+async def test_empresa_sem_conexao_tambem_vira_falha_canal(
+    db: AsyncEngine, tenant_a: uuid.UUID
+) -> None:
+    await _preparar(db, tenant_a)
+    mid, _ = await receber(tenant_a)
+    async with db.begin() as conn:
+        from sqlalchemy import text
+
+        await conn.execute(text("DELETE FROM channel_credentials"))
+        await conn.execute(text("DELETE FROM channel_connections"))
+    canal = FakeChannel()
+    assert await _job(tenant_a, mid, contexto(_llm_feliz(), canal)) == "falha_canal"
+    assert canal.enviadas == []
+    assert (await consultar(db, "SELECT motivo FROM handoff_log"))[0].motivo == "falha_canal"
+    resposta = (
+        await consultar(db, "SELECT status_envio FROM messages WHERE responde_a = :m", m=mid)
+    )[0]
+    assert resposta.status_envio == "falha"
+
+
+async def test_erro_do_canal_nao_expoe_a_chave_nos_logs(
+    db: AsyncEngine,
+    tenant_a: uuid.UUID,
+    conexao_a: ConexaoCriada,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    await _preparar(db, tenant_a)
+    mid, _ = await receber(tenant_a)
+    with caplog.at_level("DEBUG"):
+        await _job(tenant_a, mid, contexto(_llm_feliz(), FakeChannel(falhar=True)))
+    texto = caplog.text + " ".join(str(r.__dict__) for r in caplog.records)
+    assert conexao_a.api_key not in texto and conexao_a.webhook_secret not in texto
+    assert "canal_falhou" in texto
 
 
 # --- US2: roteamento --------------------------------------------------------------------------
@@ -273,7 +321,7 @@ async def test_handoff_expira_apos_o_ttl_sem_atividade_humana(
 ) -> None:
     await _preparar(db, tenant_a)
     _, cid = await receber(tenant_a, "primeira")
-    await marcar_handoff(db, cid, minutos_atras=settings.handoff_ttl_minutes + 5)
+    await marcar_handoff(db, cid, minutos_atras=TTL_PADRAO + 5)
     mid, _ = await receber(tenant_a)
     assert await _job(tenant_a, mid, contexto(_llm_feliz())) == "respondida"
     conversa = (
@@ -292,7 +340,7 @@ async def test_atividade_humana_recente_estende_o_handoff(
     db: AsyncEngine, tenant_a: uuid.UUID
 ) -> None:
     _, cid = await receber(tenant_a, "primeira")
-    await marcar_handoff(db, cid, minutos_atras=settings.handoff_ttl_minutes + 30)
+    await marcar_handoff(db, cid, minutos_atras=TTL_PADRAO + 30)
     await mensagem_humana(db, tenant_a, cid, minutos_atras=10)
     mid, _ = await receber(tenant_a)
     assert await _job(tenant_a, mid, contexto(FakeLLMClient())) == "handoff_ativo"
@@ -304,6 +352,99 @@ async def test_handoff_com_atividade_humana_antiga_tambem_expira(
     await _preparar(db, tenant_a)
     _, cid = await receber(tenant_a, "primeira")
     await marcar_handoff(db, cid, minutos_atras=300)
-    await mensagem_humana(db, tenant_a, cid, minutos_atras=settings.handoff_ttl_minutes + 10)
+    await mensagem_humana(db, tenant_a, cid, minutos_atras=TTL_PADRAO + 10)
     mid, _ = await receber(tenant_a)
     assert await _job(tenant_a, mid, contexto(_llm_feliz())) == "respondida"
+
+
+# --- multi-tenancy: configuração e conexão por empresa (US1) -------------------------------------
+async def test_ttl_do_handoff_vem_da_configuracao_da_empresa(
+    db: AsyncEngine, tenant_a: uuid.UUID
+) -> None:
+    curta = await criar_tenant(db, "TTL curto", handoff_ttl_minutos=10)
+    await criar_conexao(db, curta, instance_name="inst-curta")
+    await inserir_conhecimento(db, curta, BASE)
+    _, cid_curta = await receber(curta, "primeira")
+    await marcar_handoff(db, cid_curta, minutos_atras=15)  # passou de 10: expirou
+    mid, _ = await receber(curta)
+    assert await _job(curta, mid, contexto(_llm_feliz())) == "respondida"
+
+    # a empresa com o TTL padrão (60) ainda mantém o handoff aos mesmos 15 minutos
+    _, cid = await receber(tenant_a, "primeira")
+    await marcar_handoff(db, cid, minutos_atras=15)
+    mid_a, _ = await receber(tenant_a)
+    assert await _job(tenant_a, mid_a, contexto(FakeLLMClient())) == "handoff_ativo"
+
+
+async def test_resposta_sai_pela_conexao_da_empresa_dona_da_conversa(
+    db: AsyncEngine, tenant_a: uuid.UUID, tenant_b: uuid.UUID
+) -> None:
+    await criar_conexao(db, tenant_b, instance_name="inst-b")
+    await inserir_conhecimento(db, tenant_a, BASE)
+    await inserir_conhecimento(db, tenant_b, BASE)
+    mid_a, _ = await receber(tenant_a)
+    mid_b, _ = await receber(tenant_b)
+    canal = FakeChannel()
+
+    assert await _job(tenant_a, mid_a, contexto(_llm_feliz(), canal)) == "respondida"
+    assert await _job(tenant_b, mid_b, contexto(_llm_feliz(), canal)) == "respondida"
+
+    assert [(i, c) for i, c, _ in canal.envios] == [("inst-a", JID), ("inst-b", JID)]
+
+
+async def test_duas_empresas_mesma_pergunta_cada_uma_com_os_proprios_documentos(
+    db: AsyncEngine, tenant_a: uuid.UUID, tenant_b: uuid.UUID
+) -> None:
+    await criar_conexao(db, tenant_b, instance_name="inst-b")
+    await inserir_conhecimento(
+        db, tenant_a, {"faq.md": ["Horário de atendimento: aos sábados abrimos das 8h às 12h."]}
+    )
+    await inserir_conhecimento(
+        db, tenant_b, {"faq.md": ["Horário de atendimento: aos sábados abrimos das 9h às 15h."]}
+    )
+    mid_a, _ = await receber(tenant_a)
+    mid_b, _ = await receber(tenant_b)
+    llm_a, llm_b = _llm_feliz(), _llm_feliz()
+
+    await _job(tenant_a, mid_a, contexto(llm_a))
+    await _job(tenant_b, mid_b, contexto(llm_b))
+
+    prompt_a = " ".join(m["content"] for m in llm_a.chamadas[1]["mensagens"])
+    prompt_b = " ".join(m["content"] for m in llm_b.chamadas[1]["mensagens"])
+    assert "8h às 12h" in prompt_a and "9h às 15h" not in prompt_a
+    assert "9h às 15h" in prompt_b and "8h às 12h" not in prompt_b
+
+
+async def test_desconto_de_5_por_cento_vai_para_a_e_vira_handoff_para_b(
+    db: AsyncEngine, tenant_a: uuid.UUID
+) -> None:
+    # A tem limite de 10% (padrão do conftest); B tem limite 0%
+    b = await criar_tenant(db, "Limite zero", limite_desconto_percentual=0.0)
+    await criar_conexao(db, b, instance_name="inst-b")
+    texto = "Desconto de 5% para pagamento à vista."
+    ids_a = await inserir_conhecimento(db, tenant_a, {"promo.md": [texto]})
+    ids_b = await inserir_conhecimento(db, b, {"promo.md": [texto]})
+    pergunta = "Qual o desconto para pagamento à vista?"
+    mid_a, _ = await receber(tenant_a, pergunta)
+    mid_b, cid_b = await receber(b, pergunta)
+    canal = FakeChannel()
+
+    def llm(ids: dict[str, list[uuid.UUID]]) -> FakeLLMClient:
+        return FakeLLMClient(
+            {
+                Finalidade.ROTEADOR: [json_roteador()],
+                Finalidade.SUPORTE: [
+                    json_suporte("Temos desconto de 5% à vista.", 0.95, [str(ids["promo.md"][0])])
+                ],
+            }
+        )
+
+    assert await _job(tenant_a, mid_a, contexto(llm(ids_a), canal)) == "respondida"
+    assert await _job(b, mid_b, contexto(llm(ids_b), canal)) == "handoff"
+
+    assert [i for i, _, _ in canal.envios] == ["inst-a", "inst-b"]
+    assert canal.envios[0][2] == "Temos desconto de 5% à vista."
+    assert canal.envios[1][2] == TEXTO_HANDOFF  # a resposta com desconto não chegou ao cliente
+    log = await consultar(db, "SELECT motivo FROM handoff_log WHERE conversation_id = :c", c=cid_b)
+    assert log[0].motivo == "desconto_acima_do_limite"
+    assert await consultar(db, "SELECT 1 FROM handoff_log WHERE tenant_id = :t", t=tenant_a) == []

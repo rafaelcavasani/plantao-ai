@@ -268,7 +268,7 @@ python-dotenv==1.2.4
     #   uvicorn
 pyyaml==6.0.3
     # via
-    #   -r requirements-dev.txt
+    #   -r requirements.txt
     #   langchain-core
     #   pre-commit
     #   uvicorn

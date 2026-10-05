@@ -45,7 +45,7 @@ apps  >  agents  >  core  >  db
 - `core/` — config, guardrails, handoff, llm, observability, ports, rag, security.
 - `integrations/` — adaptadores externos (WhatsApp).
 - `db/` — modelos, sessão com RLS, repositórios e migrações.
-- `scripts/` — `seed_tenant`, `ingest_docs`, `run_evals`.
+- `scripts/` — `tenants` (onboarding e ciclo de vida das empresas), `ingest_docs`, `run_evals`.
 
 ## Arquitetura e funcionamento
 
@@ -70,7 +70,7 @@ flowchart LR
         WRK["Worker arq<br/>processar_mensagem"]
         GRAFO["Orquestrador LangGraph<br/>Guardrails, Roteador, Suporte"]
         PG[("PostgreSQL 16 + pgvector<br/>RLS por tenant")]
-        OPS["CLIs do operador<br/>seed_tenant, ingest_docs, run_evals"]
+        OPS["CLIs do operador<br/>tenants, ingest_docs, run_evals"]
     end
     CLI -->|"mensagem"| EVO
     EVO -->|"webhook messages.upsert<br/>header X-Webhook-Token"| API
@@ -92,9 +92,9 @@ flowchart LR
 
 | Sistema | Papel | Configuração |
 |---|---|---|
-| Evolution API | Recebe e envia mensagens do WhatsApp. Envio por `POST /message/sendText/{instancia}` com header `apikey`. | `WHATSAPP_BASE_URL`, `WHATSAPP_API_KEY`, `WHATSAPP_INSTANCE` |
+| Evolution API | Recebe e envia mensagens do WhatsApp. Envio por `POST /message/sendText/{instancia}` com header `apikey`. Uma instância por empresa; a chave de envio e o segredo de entrega ficam em `channel_credentials`, cadastrados pelo onboarding (nunca em variável global). | `WHATSAPP_BASE_URL` |
 | OpenRouter | Chat (`/chat/completions`, JSON, temperatura 0) e embeddings (`/embeddings`). Timeout de 15 s e 1 retry com backoff de 1 s, só em erro de rede, timeout ou 5xx. | `OPENROUTER_API_KEY`, `MODEL_CHEAP`, `MODEL_STRONG`, `EMBEDDING_MODEL` |
-| Redis | Fila do arq e contador de rate limit (`rl:{tenant}:{minuto}`, expira em 90 s). | `REDIS_URL`, `RATE_LIMIT_MSGS_PER_MIN` |
+| Redis | Fila do arq e contador de rate limit por empresa (`rl:{tenant_id}:{minuto}`, expira em 90 s; limite vem de `tenant_config.limite_mensagens_por_minuto`). | `REDIS_URL` |
 | PostgreSQL | Dados dos tenants, conversas, base de conhecimento (pgvector, índice HNSW) e custo de LLM. Acesso pelo papel `plantao_app`, com RLS. | `DATABASE_URL`, `DATABASE_ADMIN_URL` |
 | LangSmith | Traces, ligado só se houver chave. | `LANGSMITH_API_KEY`, `LANGSMITH_PROJECT` |
 
@@ -278,11 +278,11 @@ flowchart TB
     SES --> PGR
 ```
 
-- **Isolamento por tenant.** Todo acesso a dados passa por `tenant_session`, que define `app.tenant_id` na transação. As políticas de RLS do Postgres filtram as linhas por esse valor, e sem tenant definido a consulta devolve zero linhas. A aplicação conecta com o papel `plantao_app` (sem superusuário e sem `BYPASSRLS`). O superusuário só roda migrações e o seed.
-- **PII.** O telefone do contato é guardado criptografado (Fernet, `PII_ENCRYPTION_KEY`) e com hash HMAC (`PII_HASH_KEY`) para localizar a conversa. Os logs são JSON, mascaram telefone e mensagem e nunca registram o payload do webhook.
-- **Autenticação do webhook.** Header `X-Webhook-Token` comparado em tempo constante com `WHATSAPP_WEBHOOK_SECRET`. Token inválido retorna 401.
-- **Tenant do Sprint 2.** `get_tenant_id` devolve sempre o tenant piloto (`PILOT_TENANT_ID`). A resolução por número de destino é do Sprint 3.
-- **Observabilidade.** Cada chamada ao OpenRouter grava uma linha em `llm_calls` (finalidade, modelo, tokens, custo em USD, latência e erro), inclusive as que falham. Os logs carregam `correlation_id`, `tenant_id` e `conversation_id`.
+- **Isolamento por tenant.** Todo acesso a dados passa por `tenant_session`, que define `app.tenant_id` na transação. As políticas de RLS do Postgres filtram as linhas por esse valor, e sem tenant definido a consulta devolve zero linhas. A aplicação conecta com o papel `plantao_app` (sem superusuário e sem `BYPASSRLS`). O papel administrativo (`DATABASE_ADMIN_URL`) ignora RLS e só é usado por `scripts/tenants.py` (operações entre empresas: criar, listar, mudar estado, apagar).
+- **PII.** O telefone do contato é guardado criptografado (Fernet, `PII_ENCRYPTION_KEY`) e com hash HMAC (`PII_HASH_KEY`) para localizar a conversa. Os logs são JSON, mascaram telefone e mensagem e nunca registram o payload do webhook nem credenciais.
+- **Resolução da empresa e autenticação do webhook.** A empresa é identificada pela **conexão de canal** (`channel_connections`, diretório de roteamento por `instance_name`). O header `X-Webhook-Token` é comparado em tempo constante com o `webhook_secret_hash` **daquela conexão**; instância desconhecida, sem token e token errado devolvem o mesmo 401. Não existe mais segredo global nem tenant fixo.
+- **Ciclo de vida.** Cada empresa tem estado `em_configuracao`, `ativo`, `suspenso` ou `encerrado`, lido do banco a cada mensagem (sem cache). Suspensão e reativação valem em até 1 minuto, inclusive para jobs já na fila.
+- **Observabilidade.** Cada chamada ao OpenRouter grava uma linha em `llm_calls` (finalidade, modelo, tokens, custo em USD, latência e erro), inclusive as que falham. Os logs carregam `correlation_id`, `tenant_id` e `conversation_id`. Mudanças de configuração, estado, conexão e exclusão de dados vão para `audit_log` (campo, valor anterior, valor novo, operador, data), sem segredos.
 
 ### 7. Modelo de dados
 
@@ -384,14 +384,15 @@ Preencha no `.env`:
 | Variável | Observação |
 |---|---|
 | `DATABASE_URL` | Usa o papel `plantao_app` (sujeito a RLS) |
-| `DATABASE_ADMIN_URL` | Superusuário, só para migrações e seed |
+| `DATABASE_ADMIN_URL` | Superusuário, só para `scripts/` (migrações e CLI de operador) |
 | `APP_DB_PASSWORD` | Senha do papel `plantao_app` criado pela migração |
 | `OPENROUTER_API_KEY` | Chave do OpenRouter |
 | `PII_ENCRYPTION_KEY` | Chave Fernet (`python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`) |
 | `PII_HASH_KEY` | Segredo para o hash de contatos |
-| `WHATSAPP_WEBHOOK_SECRET` | Token esperado no webhook |
-| `WHATSAPP_BASE_URL`, `WHATSAPP_API_KEY`, `WHATSAPP_INSTANCE` | Evolution API |
-| `PILOT_TENANT_ID` | Preenchido após o seed (passo 4) |
+| `WHATSAPP_BASE_URL` | Evolution API (a instância, a chave de envio e o segredo de entrega são por empresa, cadastrados pelo onboarding) |
+| `PURGE_DRENAGEM_SEGUNDOS` | Espera mínima entre encerrar e apagar os dados de uma empresa (padrão 120) |
+
+Não existem mais `PILOT_TENANT_ID` nem `WHATSAPP_WEBHOOK_SECRET`: cada empresa tem sua própria conexão e credenciais (ver passo 4).
 
 ### 3. Migrações
 
@@ -399,14 +400,39 @@ Preencha no `.env`:
 alembic upgrade head
 ```
 
-### 4. Tenant piloto e base de conhecimento
+### 4. Onboarding de uma empresa
+
+Não existe mais seed de tenant único: cada empresa entra por um arquivo de onboarding (esquema em
+[specs/002-multitenancy/contracts/onboarding-file.md](specs/002-multitenancy/contracts/onboarding-file.md),
+exemplos em [docs/exemplos/](docs/exemplos/)). As credenciais entram por **nome de variável de ambiente**, nunca
+no arquivo nem na saída do comando.
 
 ```powershell
-python -m scripts.seed_tenant                 # imprime o PILOT_TENANT_ID; copie para o .env
-python -m scripts.ingest_docs load tests\evals\docs_piloto
-python -m scripts.ingest_docs list
-python -m scripts.ingest_docs remove faq_clinica.md --yes
+$env:MINHA_CLINICA_API_KEY = "..."
+$env:MINHA_CLINICA_WEBHOOK_SECRET = "..."
+python -m scripts.tenants create --file docs\exemplos\empresa-modelo.yml --operador rafael
+python -m scripts.tenants readiness minha-clinica --operador rafael
+python -m scripts.tenants test minha-clinica --file docs\exemplos\empresa-modelo.yml --operador rafael
+python -m scripts.tenants activate minha-clinica --operador rafael
+
+python -m scripts.ingest_docs load --tenant minha-clinica tests\evals\docs_piloto
+python -m scripts.ingest_docs list --tenant minha-clinica
+python -m scripts.ingest_docs remove --tenant minha-clinica faq_clinica.md --yes
 ```
+
+Ciclo de vida completo (suspender, reativar, encerrar, apagar) e configuração por empresa:
+
+```powershell
+python -m scripts.tenants suspend minha-clinica --operador rafael --motivo "incidente"
+python -m scripts.tenants resume minha-clinica --operador rafael
+python -m scripts.tenants config set minha-clinica --operador rafael limite_desconto_percentual=5
+python -m scripts.tenants audit minha-clinica
+python -m scripts.tenants close minha-clinica --operador rafael
+python -m scripts.tenants purge minha-clinica --operador rafael --confirmar "Nome exato da empresa"
+```
+
+Todos os comandos (e os alvos equivalentes `make tenant-*`) estão documentados em
+[specs/002-multitenancy/contracts/tenants-cli.md](specs/002-multitenancy/contracts/tenants-cli.md).
 
 ### 5. API e worker
 
@@ -417,7 +443,9 @@ arq apps.worker.settings.WorkerSettings
 
 `GET /health` responde na porta 8000. O webhook é `POST /webhooks/whatsapp` com o token configurado.
 
-O passo a passo completo, incluindo o teste com a Evolution API, está em [specs/001-router-support-agent/quickstart.md](specs/001-router-support-agent/quickstart.md).
+O passo a passo completo do multi-tenancy (onboarding, isolamento entre empresas, suspensão e exclusão) está em
+[specs/002-multitenancy/quickstart.md](specs/002-multitenancy/quickstart.md); o fluxo original de roteador e
+suporte, em [specs/001-router-support-agent/quickstart.md](specs/001-router-support-agent/quickstart.md).
 
 ## Qualidade
 
@@ -451,9 +479,9 @@ Resultados e limitações do Sprint 2: [docs/SPRINT_2_RESULTADOS.md](docs/SPRINT
 |:---:|---|
 | 1 | Fundação: repositório, Postgres + pgvector, FastAPI, webhook WhatsApp (eco) |
 | 2 | Agente Roteador + Agente de Suporte com RAG, guardrails, handoff (1 tenant piloto) |
-| 3 | Onboarding programático de tenants |
+| 3 | Multi-tenancy real: resolução por conexão, onboarding repetível, ciclo de vida, isolamento comprovado |
 | 4 | Agente Agendador (Google Calendar) |
 | 5 | Agente SDR + guardrails ampliados |
 | 6 | Observabilidade (LangSmith) + cobrança recorrente |
 
-Histórico: [docs/SPRINT_1_PLAN.md](docs/SPRINT_1_PLAN.md).
+Histórico: [docs/SPRINT_1_PLAN.md](docs/SPRINT_1_PLAN.md), [docs/SPRINT_2_RESULTADOS.md](docs/SPRINT_2_RESULTADOS.md).

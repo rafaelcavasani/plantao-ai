@@ -34,6 +34,8 @@ class ConfigTenant:
     confianca_minima_handoff: float = 0.7
     router_confidence_threshold: float = 0.6
     min_similarity: float = 0.30
+    handoff_ttl_minutos: int = 60
+    limite_mensagens_por_minuto: int = 60
 
     @classmethod
     def de_modelo(cls, c: TenantConfig) -> ConfigTenant:
@@ -46,6 +48,8 @@ class ConfigTenant:
             confianca_minima_handoff=c.confianca_minima_handoff,
             router_confidence_threshold=c.router_confidence_threshold,
             min_similarity=c.min_similarity,
+            handoff_ttl_minutos=c.handoff_ttl_minutos,
+            limite_mensagens_por_minuto=c.limite_mensagens_por_minuto,
         )
 
 

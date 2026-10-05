@@ -30,7 +30,10 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
-PALAVRAS_GATILHO_PADRAO = ["processo", "procon", "cancelar tudo", "advogado", "reclamação"]
+from db.config_padrao import CONFIG_PADRAO, PALAVRAS_GATILHO_PADRAO
+
+__all__ = ["PALAVRAS_GATILHO_PADRAO"]
+
 EMBEDDING_DIM = 1536
 
 
@@ -47,10 +50,16 @@ class Tenant(Base):
     nome_empresa: Mapped[str] = mapped_column(String(255))
     nicho: Mapped[str] = mapped_column(String(100))
     plano: Mapped[str] = mapped_column(String(50), default="recepcionista")
+    slug: Mapped[str] = mapped_column(String(63), unique=True)  # chave natural do onboarding
     status: Mapped[str] = mapped_column(
-        String(50), default="trial"
-    )  # trial|ativo|suspenso|cancelado
+        String(50), default="em_configuracao"
+    )  # em_configuracao|ativo|suspenso|encerrado
     criado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    ativado_em: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    encerrado_em: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    dados_apagados_em: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     config: Mapped[TenantConfig] = relationship(back_populates="tenant", uselist=False)
 
@@ -61,16 +70,28 @@ class TenantConfig(Base):
     __tablename__ = "tenant_config"
 
     tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id"), primary_key=True)
-    tom_de_voz: Mapped[str] = mapped_column(Text, default="")
+    tom_de_voz: Mapped[str] = mapped_column(Text, default=lambda: CONFIG_PADRAO["tom_de_voz"])
     horario_funcionamento: Mapped[dict[str, str]] = mapped_column(JSON, default=dict)
-    limite_desconto_percentual: Mapped[float] = mapped_column(Float, default=0.0)
+    limite_desconto_percentual: Mapped[float] = mapped_column(
+        Float, default=CONFIG_PADRAO["limite_desconto_percentual"]
+    )
     topicos_proibidos: Mapped[list[str]] = mapped_column(JSON, default=list)
-    confianca_minima_handoff: Mapped[float] = mapped_column(Float, default=0.7)
+    confianca_minima_handoff: Mapped[float] = mapped_column(
+        Float, default=CONFIG_PADRAO["confianca_minima_handoff"]
+    )
     palavras_gatilho: Mapped[list[str]] = mapped_column(
         JSON, default=lambda: list(PALAVRAS_GATILHO_PADRAO)
     )
-    router_confidence_threshold: Mapped[float] = mapped_column(Float, default=0.6)
-    min_similarity: Mapped[float] = mapped_column(Float, default=0.30)
+    router_confidence_threshold: Mapped[float] = mapped_column(
+        Float, default=CONFIG_PADRAO["router_confidence_threshold"]
+    )
+    min_similarity: Mapped[float] = mapped_column(Float, default=CONFIG_PADRAO["min_similarity"])
+    handoff_ttl_minutos: Mapped[int] = mapped_column(
+        Integer, default=CONFIG_PADRAO["handoff_ttl_minutos"]
+    )
+    limite_mensagens_por_minuto: Mapped[int] = mapped_column(
+        Integer, default=CONFIG_PADRAO["limite_mensagens_por_minuto"]
+    )
 
     tenant: Mapped[Tenant] = relationship(back_populates="config")
 
@@ -140,6 +161,8 @@ class Conversation(Base):
     iniciado_em: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+    iniciada_por: Mapped[str] = mapped_column(String(20), default="contato")  # contato|empresa
+    recebida_em_suspensao: Mapped[bool] = mapped_column(Boolean, default=False)
 
     messages: Mapped[list[Message]] = relationship(back_populates="conversation")
 
@@ -274,4 +297,78 @@ class LLMCall(Base):
     latencia_ms: Mapped[int] = mapped_column(Integer, default=0)
     sucesso: Mapped[bool] = mapped_column(Boolean, default=True)
     erro: Mapped[str | None] = mapped_column(Text, nullable=True)
+    criado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ChannelConnection(Base):
+    """Diretório de roteamento: qual empresa é dona de qual instância do canal.
+
+    Exceção declarada ao princípio III: leitura aberta (o webhook precisa localizar a empresa antes
+    de saber qual ela é); escrita restrita à empresa dona. Sem colunas sensíveis.
+    """
+
+    __tablename__ = "channel_connections"
+    __table_args__ = (
+        UniqueConstraint("instance_name", name="uq_channel_connections_instance"),
+        UniqueConstraint("tenant_id", "canal", name="uq_channel_connections_tenant_canal"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id"), index=True)
+    canal: Mapped[str] = mapped_column(String(50))  # whatsapp
+    provedor: Mapped[str] = mapped_column(String(30))  # evolution
+    instance_name: Mapped[str] = mapped_column(String(100))
+    verificada_em: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    criado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ChannelCredential(Base):
+    """Segredos da conexão: hash do segredo de entrega e chave de envio cifrada."""
+
+    __tablename__ = "channel_credentials"
+
+    connection_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("channel_connections.id", ondelete="CASCADE"), primary_key=True
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id"), index=True)
+    webhook_secret_hash: Mapped[str] = mapped_column(String(64))  # sha256 do segredo
+    api_key_enc: Mapped[str] = mapped_column(Text)  # Fernet da chave de envio
+    atualizado_em: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class ReadinessCheck(Base):
+    """Resultado de uma verificação de prontidão ou de uma conversa de teste."""
+
+    __tablename__ = "readiness_checks"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id"), index=True)
+    executado_em: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    operador: Mapped[str] = mapped_column(String(100))
+    tipo: Mapped[str] = mapped_column(String(20))  # prontidao|conversa_teste
+    config_ok: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    documentos_ok: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    conexao_ok: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    conversa_teste_ok: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    aprovado: Mapped[bool] = mapped_column(Boolean, default=False)
+    detalhes: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
+
+
+class AuditLog(Base):
+    """Trilha de auditoria só de inclusão. Sem FK para `tenants`: sobrevive à exclusão de dados."""
+
+    __tablename__ = "audit_log"
+    __table_args__ = (Index("ix_audit_log_tenant_criado", "tenant_id", text("criado_em DESC")),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True))
+    entidade: Mapped[str] = mapped_column(String(20))  # config|estado|conexao|dados
+    campo: Mapped[str] = mapped_column(String(100))
+    valor_anterior: Mapped[object | None] = mapped_column(JSON(none_as_null=True), nullable=True)
+    valor_novo: Mapped[object | None] = mapped_column(JSON(none_as_null=True), nullable=True)
+    operador: Mapped[str] = mapped_column(String(100))
     criado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

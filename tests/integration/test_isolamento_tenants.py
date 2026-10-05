@@ -1,76 +1,39 @@
-"""Isolamento entre tenants com RLS e o papel `plantao_app` (T022, princípio III, FR-021)."""
+"""Isolamento entre empresas com RLS e o papel `plantao_app`: A, B e C (T055, princípio III, FR-021, FR-028).
+
+Cada tabela com `tenant_id` está em `ENTIDADES_COBERTAS` (`tests/fakes/isolamento.py`) e passa pela matriz:
+leitura própria, nenhuma linha alheia, escrita cruzada recusada e zero linhas sem contexto. A cobertura do registro
+é conferida em `test_isolamento_cobertura.py`; a capacidade de a matriz detectar vazamento, em `test_isolamento_quebra.py`.
+"""
 
 import uuid
 
 import pytest
-from sqlalchemy import select, text
-from sqlalchemy.exc import DBAPIError
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
+import pytest_asyncio
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncEngine
 
-from db.models import (
-    Conversation,
-    HandoffLog,
-    KnowledgeDocument,
-    LLMCall,
-    Message,
-    Tenant,
-    TenantConfig,
-    TenantKnowledge,
+from db.session import get_session_factory
+from tests.fakes.isolamento import (
+    ENTIDADES_COBERTAS,
+    Dados,
+    popular_todas,
+    sessao_real,
+    verificar_busca_vetorial,
+    verificar_entidade,
+    verificar_tenants,
 )
-from db.session import get_session_factory, tenant_session
 
 pytestmark = pytest.mark.integration
 
-TABELAS = [
-    Conversation,
-    Message,
-    KnowledgeDocument,
-    TenantKnowledge,
-    LLMCall,
-    HandoffLog,
-    TenantConfig,
-]
+Trio = tuple[dict[str, uuid.UUID], dict[uuid.UUID, Dados]]
 
 
-async def _popular(engine: AsyncEngine, tenant_id: uuid.UUID) -> None:
-    async with AsyncSession(engine) as s:
-        conv = Conversation(
-            tenant_id=tenant_id, canal="whatsapp", contato_hash="h", contato_enc="e"
-        )
-        s.add(conv)
-        await s.flush()
-        msg = Message(
-            tenant_id=tenant_id,
-            conversation_id=conv.id,
-            remetente="lead",
-            conteudo="oi",
-            external_id="x1",
-        )
-        doc = KnowledgeDocument(
-            tenant_id=tenant_id, nome_origem="faq.md", content_hash="c", num_trechos=1
-        )
-        s.add_all([msg, doc])
-        await s.flush()
-        s.add_all(
-            [
-                TenantKnowledge(
-                    tenant_id=tenant_id,
-                    documento_id=doc.id,
-                    documento_origem="faq.md",
-                    chunk_texto="t",
-                    embedding=[0.1] * 1536,
-                ),
-                LLMCall(tenant_id=tenant_id, finalidade="roteador", modelo="m", sucesso=True),
-                HandoffLog(
-                    tenant_id=tenant_id, conversation_id=conv.id, message_id=msg.id, motivo="x"
-                ),
-            ]
-        )
-        await s.commit()
-
-
-async def _contar(session: AsyncSession, modelo: type) -> int:
-    return len((await session.execute(select(modelo))).scalars().all())
+@pytest_asyncio.fixture
+async def trio(
+    db: AsyncEngine, tenant_a: uuid.UUID, tenant_b: uuid.UUID, tenant_c: uuid.UUID
+) -> Trio:
+    ids = {"a": tenant_a, "b": tenant_b, "c": tenant_c}
+    return ids, await popular_todas(db, ids)
 
 
 async def test_papel_da_aplicacao_nao_e_superusuario(db: AsyncEngine) -> None:
@@ -83,49 +46,55 @@ async def test_papel_da_aplicacao_nao_e_superusuario(db: AsyncEngine) -> None:
     assert row == (False, False)
 
 
-async def test_tenant_b_nao_le_dados_do_tenant_a(
-    db: AsyncEngine, tenant_a: uuid.UUID, tenant_b: uuid.UUID
-) -> None:
-    await _popular(db, tenant_a)
-
-    async with tenant_session(tenant_a) as s:
-        for modelo in TABELAS:
-            assert await _contar(s, modelo) == 1, modelo.__name__
-
-    async with tenant_session(tenant_b) as s:
-        for modelo in [m for m in TABELAS if m is not TenantConfig]:
-            assert await _contar(s, modelo) == 0, modelo.__name__
-        tenants = (await s.execute(select(Tenant.id))).scalars().all()
-        assert tenants == [tenant_b]
-
-
-async def test_sem_tenant_definido_retorna_zero_linhas(
-    db: AsyncEngine, tenant_a: uuid.UUID
-) -> None:
-    await _popular(db, tenant_a)
-    async with get_session_factory()() as s:
-        for modelo in [*TABELAS, Tenant]:
-            assert await _contar(s, modelo) == 0, modelo.__name__
+def test_registro_cobre_as_quinze_entidades_com_tenant_id() -> None:
+    assert sorted(ENTIDADES_COBERTAS) == sorted(
+        [
+            "tenant_config",
+            "tenant_knowledge",
+            "knowledge_documents",
+            "conversations",
+            "messages",
+            "leads",
+            "appointments",
+            "billing_events",
+            "usage_metrics",
+            "handoff_log",
+            "llm_calls",
+            "channel_connections",
+            "channel_credentials",
+            "readiness_checks",
+            "audit_log",
+        ]
+    )
 
 
-async def test_tenant_nao_grava_para_outro_tenant(
-    db: AsyncEngine, tenant_a: uuid.UUID, tenant_b: uuid.UUID
-) -> None:
-    with pytest.raises(DBAPIError):
-        async with tenant_session(tenant_a) as s:
-            s.add(
-                Conversation(
-                    tenant_id=tenant_b, canal="whatsapp", contato_hash="h", contato_enc="e"
-                )
+async def test_todas_as_entidades_estao_isoladas_entre_a_b_e_c(trio: Trio) -> None:
+    """Uma só preparação de dados; as falhas de todas as entidades saem juntas na mensagem."""
+    ids, dados = trio
+    falhas: list[str] = []
+    for tabela in sorted(ENTIDADES_COBERTAS):
+        try:
+            await verificar_entidade(sessao_real, tabela, ids, dados)
+        except AssertionError as exc:
+            falhas.append(f"{tabela}: {exc}")
+    assert not falhas, "\n".join(falhas)
+
+
+async def test_busca_vetorial_so_enxerga_os_trechos_da_propria_empresa(trio: Trio) -> None:
+    ids, dados = trio
+    await verificar_busca_vetorial(sessao_real, ids, dados)
+
+
+async def test_cada_empresa_so_enxerga_a_propria_linha_em_tenants(trio: Trio) -> None:
+    ids, _ = trio
+    await verificar_tenants(sessao_real, ids)
+
+
+async def test_credenciais_so_aparecem_para_a_empresa_dona(trio: Trio) -> None:
+    ids, _ = trio
+    for dono in ids.values():
+        async with sessao_real(dono) as s:
+            donos = (
+                (await s.execute(text("SELECT tenant_id FROM channel_credentials"))).scalars().all()
             )
-            await s.flush()
-
-
-async def test_busca_vetorial_respeita_tenant(
-    db: AsyncEngine, tenant_a: uuid.UUID, tenant_b: uuid.UUID
-) -> None:
-    await _popular(db, tenant_a)
-    async with tenant_session(tenant_b) as s:
-        distancia = TenantKnowledge.embedding.cosine_distance([0.1] * 1536)
-        rows = (await s.execute(select(TenantKnowledge.id).order_by(distancia).limit(4))).all()
-    assert rows == []
+        assert set(donos) == {dono}

@@ -10,6 +10,8 @@ TEXTO_NAO_TEXTO = (
 )
 
 MOTIVO_NAO_TEXTO = "nao_texto"
+# O canal da empresa falhou: nao ha texto ao cliente, porque nada chegaria a ele.
+MOTIVO_FALHA_CANAL = "falha_canal"
 
 
 def texto_para_motivo(motivo: str) -> str:

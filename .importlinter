@@ -18,6 +18,7 @@ layers =
 # core.config é configuração transversal (folha, sem dependências internas); db a lê para a URL.
 ignore_imports =
     db.session -> core.config
+    db.admin -> core.config
     db.migrations.env -> core.config
 
 [importlinter:contract:core-isolado]

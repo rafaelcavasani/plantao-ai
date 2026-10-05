@@ -11,7 +11,7 @@ from typing import Any, Literal
 import httpx
 
 from core.config import settings
-from core.ports.channel import ChannelError
+from core.ports.channel import ChannelError, ConexaoCanal, EstadoConexao
 
 _EVENTO_MENSAGEM = "messages.upsert"
 
@@ -22,6 +22,13 @@ class MensagemEntrada:
     external_id: str
     tipo: Literal["texto", "nao_texto"]
     conteudo: str
+    instance: str = ""  # nome da instância do provedor; vazio se ausente
+
+
+def instancia_do_payload(payload: dict[str, Any]) -> str:
+    """Nome da instância do corpo do webhook; string vazia se ausente ou de outro tipo."""
+    valor = payload.get("instance")
+    return valor if isinstance(valor, str) else ""
 
 
 def parse_inbound(payload: dict[str, Any]) -> MensagemEntrada | None:
@@ -43,6 +50,7 @@ def parse_inbound(payload: dict[str, Any]) -> MensagemEntrada | None:
     if not contato or not external_id:
         return None
     contato = str(contato)
+    instancia = instancia_do_payload(payload)
     if contato.endswith("@g.us") or contato == "status@broadcast":
         return None
     mensagem = data.get("message")
@@ -52,34 +60,62 @@ def parse_inbound(payload: dict[str, Any]) -> MensagemEntrada | None:
         estendida.get("text") if isinstance(estendida, dict) else None
     )
     if isinstance(texto, str) and texto:
-        return MensagemEntrada(contato, str(external_id), "texto", texto)
-    return MensagemEntrada(contato, str(external_id), "nao_texto", "")
+        return MensagemEntrada(contato, str(external_id), "texto", texto, instancia)
+    return MensagemEntrada(contato, str(external_id), "nao_texto", "", instancia)
 
 
 class WhatsAppClient:
-    """Envio de mensagens pela Evolution API."""
+    """Envio e verificação pela Evolution API. Um cliente HTTP compartilhado por todas as empresas;
+    a credencial vai no cabeçalho de cada chamada e nunca fica no objeto."""
 
     def __init__(
         self, *, transport: httpx.AsyncBaseTransport | None = None, timeout: float = 10.0
     ) -> None:
         self._base_url = settings.whatsapp_base_url.rstrip("/")
-        self._instance = settings.whatsapp_instance
-        self._headers = {"apikey": settings.whatsapp_api_key}
-        self._provider = settings.whatsapp_provider
         self._http = httpx.AsyncClient(transport=transport, timeout=timeout)
 
-    async def send_text(self, contato: str, texto: str) -> None:
-        if self._provider != "evolution":
-            raise ChannelError(f"provedor_nao_implementado:{self._provider}")
-        url = f"{self._base_url}/message/sendText/{self._instance}"
+    @staticmethod
+    def _exigir_provedor(conexao: ConexaoCanal) -> None:
+        if conexao.provedor != "evolution":
+            raise ChannelError(f"provedor_nao_implementado:{conexao.provedor}")
+
+    async def send_text(self, conexao: ConexaoCanal, contato: str, texto: str) -> None:
+        self._exigir_provedor(conexao)
+        url = f"{self._base_url}/message/sendText/{conexao.instance_name}"
         try:
             resposta = await self._http.post(
-                url, json={"number": contato, "text": texto}, headers=self._headers
+                url, json={"number": contato, "text": texto}, headers={"apikey": conexao.api_key}
             )
         except httpx.HTTPError as exc:
             raise ChannelError(type(exc).__name__) from exc
         if not resposta.is_success:
             raise ChannelError(f"http_{resposta.status_code}")
 
+    async def verificar(self, conexao: ConexaoCanal) -> EstadoConexao:
+        self._exigir_provedor(conexao)
+        url = f"{self._base_url}/instance/connectionState/{conexao.instance_name}"
+        try:
+            resposta = await self._http.get(url, headers={"apikey": conexao.api_key})
+        except httpx.HTTPError as exc:
+            raise ChannelError(type(exc).__name__) from exc
+        if not resposta.is_success:
+            raise ChannelError(f"http_{resposta.status_code}")
+        try:
+            corpo = resposta.json()
+        except ValueError as exc:
+            raise ChannelError("resposta_invalida") from exc
+        return _estado_da_resposta(corpo)
+
     async def aclose(self) -> None:
         await self._http.aclose()
+
+
+def _estado_da_resposta(corpo: Any) -> EstadoConexao:
+    """Lê `state` em `{"instance": {"state": ...}}` ou `{"state": ...}`; `open` significa conectada."""
+    if not isinstance(corpo, dict):
+        return EstadoConexao.DESCONHECIDA
+    interno = corpo.get("instance")
+    estado = interno.get("state") if isinstance(interno, dict) else corpo.get("state")
+    if not isinstance(estado, str) or not estado:
+        return EstadoConexao.DESCONHECIDA
+    return EstadoConexao.CONECTADA if estado == "open" else EstadoConexao.DESCONECTADA

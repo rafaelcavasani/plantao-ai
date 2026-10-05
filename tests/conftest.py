@@ -7,9 +7,12 @@ As variáveis de ambiente precisam ser definidas ANTES de qualquer import de `co
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import os
+import re
 import uuid
 from collections.abc import AsyncIterator, Iterator
+from dataclasses import dataclass
 from pathlib import Path
 
 from cryptography.fernet import Fernet
@@ -28,9 +31,8 @@ os.environ["APP_DB_PASSWORD"] = "plantao_app"
 os.environ["REDIS_URL"] = "redis://localhost:6379/15"
 os.environ["PII_ENCRYPTION_KEY"] = Fernet.generate_key().decode()
 os.environ["PII_HASH_KEY"] = "chave-hash-somente-para-testes"
-os.environ["WHATSAPP_WEBHOOK_SECRET"] = "segredo-de-teste"
 os.environ["OPENROUTER_API_KEY"] = "sk-teste"
-os.environ["PILOT_TENANT_ID"] = ""
+os.environ["PURGE_DRENAGEM_SEGUNDOS"] = "0"
 
 import pytest  # noqa: E402
 import pytest_asyncio  # noqa: E402
@@ -38,10 +40,10 @@ from alembic import command  # noqa: E402
 from alembic.config import Config  # noqa: E402
 from sqlalchemy import text  # noqa: E402
 from sqlalchemy.engine import make_url  # noqa: E402
-from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine  # noqa: E402
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine  # noqa: E402
 from sqlalchemy.pool import NullPool  # noqa: E402
 
-from db.models import Tenant, TenantConfig  # noqa: E402
+from db.models import ChannelConnection, ChannelCredential, Tenant, TenantConfig  # noqa: E402
 
 RAIZ = Path(__file__).resolve().parent.parent
 
@@ -94,7 +96,8 @@ async def db(admin_engine: AsyncEngine) -> AsyncIterator[AsyncEngine]:
     async with admin_engine.begin() as conn:
         await conn.execute(
             text(
-                "TRUNCATE handoff_log, llm_calls, messages, conversations, leads, appointments, "
+                "TRUNCATE readiness_checks, audit_log, channel_credentials, channel_connections, "
+                "handoff_log, llm_calls, messages, conversations, leads, appointments, "
                 "billing_events, usage_metrics, tenant_knowledge, knowledge_documents, "
                 "tenant_config, tenants CASCADE"
             )
@@ -103,9 +106,17 @@ async def db(admin_engine: AsyncEngine) -> AsyncIterator[AsyncEngine]:
 
 
 async def criar_tenant(
-    engine: AsyncEngine, nome: str = "Clínica Teste", **config: object
+    engine: AsyncEngine,
+    nome: str = "Clínica Teste",
+    *,
+    slug: str | None = None,
+    status: str = "ativo",
+    **config: object,
 ) -> uuid.UUID:
-    """Cria tenant + config (como admin, ignorando RLS) e devolve o id."""
+    """Cria tenant + config (como admin, ignorando RLS) e devolve o id.
+
+    `status` padrão é `ativo` para os testes de pipeline continuarem válidos.
+    """
     tenant_id = uuid.uuid4()
     valores: dict[str, object] = {
         "tom_de_voz": "Cordial e direto.",
@@ -118,14 +129,65 @@ async def criar_tenant(
         "min_similarity": 0.30,
     }
     valores.update(config)
-    from sqlalchemy.ext.asyncio import AsyncSession
+    base = re.sub(r"[^a-z0-9]+", "-", nome.lower().encode("ascii", "ignore").decode()).strip("-")
+    slug = slug or f"{base or 'empresa'}-{uuid.uuid4().hex[:8]}"
 
     async with AsyncSession(engine, expire_on_commit=False) as session:
-        session.add(Tenant(id=tenant_id, nome_empresa=nome, nicho="clinica", plano="recepcionista"))
+        session.add(
+            Tenant(
+                id=tenant_id,
+                nome_empresa=nome,
+                slug=slug,
+                nicho="clinica",
+                plano="recepcionista",
+                status=status,
+            )
+        )
         await session.flush()
         session.add(TenantConfig(tenant_id=tenant_id, **valores))
         await session.commit()
     return tenant_id
+
+
+@dataclass(frozen=True)
+class ConexaoCriada:
+    """Valores em claro de uma conexão criada por `criar_conexao` (só existem no teste)."""
+
+    connection_id: uuid.UUID
+    instance_name: str
+    webhook_secret: str
+    api_key: str
+
+
+async def criar_conexao(
+    engine: AsyncEngine,
+    tenant_id: uuid.UUID,
+    instance_name: str | None = None,
+    webhook_secret: str | None = None,
+    api_key: str | None = None,
+) -> ConexaoCriada:
+    """Cadastra a conexão de canal da empresa (como admin) e devolve os valores em claro."""
+    instance_name = instance_name or f"inst-{uuid.uuid4().hex[:10]}"
+    webhook_secret = webhook_secret or f"segredo-{uuid.uuid4().hex}"
+    api_key = api_key or f"chave-{uuid.uuid4().hex}"
+    from core.security.crypto import get_cripto
+
+    async with AsyncSession(engine, expire_on_commit=False) as session:
+        conexao = ChannelConnection(
+            tenant_id=tenant_id, canal="whatsapp", provedor="evolution", instance_name=instance_name
+        )
+        session.add(conexao)
+        await session.flush()
+        session.add(
+            ChannelCredential(
+                connection_id=conexao.id,
+                tenant_id=tenant_id,
+                webhook_secret_hash=hashlib.sha256(webhook_secret.encode()).hexdigest(),
+                api_key_enc=get_cripto().encrypt(api_key),
+            )
+        )
+        await session.commit()
+    return ConexaoCriada(conexao.id, instance_name, webhook_secret, api_key)
 
 
 @pytest_asyncio.fixture
@@ -136,3 +198,8 @@ async def tenant_a(db: AsyncEngine) -> uuid.UUID:
 @pytest_asyncio.fixture
 async def tenant_b(db: AsyncEngine) -> uuid.UUID:
     return await criar_tenant(db, "Clínica B")
+
+
+@pytest_asyncio.fixture
+async def tenant_c(db: AsyncEngine) -> uuid.UUID:
+    return await criar_tenant(db, "Clínica C")

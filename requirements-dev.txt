@@ -9,5 +9,4 @@ pip-audit>=2.7
 pip-tools>=7.4
 pre-commit>=3.8
 fakeredis>=2.23
-pyyaml>=6.0
 types-PyYAML>=6.0

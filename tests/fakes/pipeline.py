@@ -83,3 +83,8 @@ async def consultar(db: AsyncEngine, sql: str, **params: Any) -> list[Any]:
 
 def contexto(llm: FakeLLMClient, channel: FakeChannel | None = None) -> dict[str, Any]:
     return {"grafo": Grafo(llm), "channel": channel or FakeChannel()}
+
+
+async def slug_de(db: AsyncEngine, tenant_id: uuid.UUID) -> str:
+    """`slug` da empresa (os comandos de operador recebem o slug, não o id)."""
+    return str((await consultar(db, "SELECT slug FROM tenants WHERE id = :t", t=tenant_id))[0].slug)

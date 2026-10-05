@@ -144,5 +144,16 @@ constante com um time de uma pessoa.*
 - Decisão (2026-10-04): os gates dos princípios II, III, IV, V e VII são verificados pelo
   plano de cada feature na seção "Constitution Check"; os templates do Spec Kit não foram
   alterados.
+- Decisão (002-multitenancy): `channel_connections` tem leitura aberta (sem filtro por
+  `app.tenant_id`), porque o webhook precisa localizar a empresa pela instância do canal
+  antes de qualquer sessão com tenant existir; é a única exceção reconhecida ao princípio
+  III, documentada em [ADR-0003](../../docs/adr/0003-resolucao-por-conexao.md). A tabela não
+  guarda credenciais (ficam em `channel_credentials`, com RLS normal e valores cifrados).
+- Decisão (002-multitenancy): o papel administrativo do banco (`DATABASE_ADMIN_URL`, que
+  ignora RLS) é de uso exclusivo de `scripts/` (migrações e CLI de operador: criar, listar,
+  mudar estado, apagar empresa). Nenhum módulo de `apps/` DEVE referenciar esse papel; a
+  checagem estática está em `tests/unit/test_admin_isolado.py`. A exclusão de dados de uma
+  empresa (`purge`) está detalhada em
+  [ADR-0004](../../docs/adr/0004-exclusao-de-dados-de-empresa.md).
 
-**Version**: 1.0.0 | **Ratified**: 2026-10-04 | **Last Amended**: 2026-10-04
+**Version**: 1.0.1 | **Ratified**: 2026-10-04 | **Last Amended**: 2026-10-26

@@ -160,6 +160,7 @@ python-dotenv==1.2.4
     #   uvicorn
 pyyaml==6.0.3
     # via
+    #   -r requirements.txt
     #   langchain-core
     #   uvicorn
 redis==5.3.1

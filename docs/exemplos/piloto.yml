@@ -1,0 +1,40 @@
+# Empresa piloto (Clínica Sorriso) no formato de onboarding (research R-15).
+#
+# Rodar UMA vez depois da migração 0004, no mesmo deploy:
+#
+#   $env:PILOTO_API_KEY = "<chave de envio da instância na Evolution>"
+#   $env:PILOTO_WEBHOOK_SECRET = "<segredo de entrega com 32+ caracteres, o mesmo configurado no webhook>"
+#   python -m scripts.tenants create --file docs/exemplos/piloto.yml --operador SEU_NOME
+#
+# O `slug` é o mesmo que a migração atribuiu à empresa existente: o comando a encontra, mantém `ativo`,
+# acrescenta a conexão do canal e deixa os documentos já indexados como INALTERADO. Sem segredos neste arquivo.
+
+slug: clinica-sorriso-piloto
+nome_empresa: "Clínica Sorriso (piloto)"
+nicho: clinica_odontologica
+plano: recepcionista
+
+configuracao:
+  tom_de_voz: "Cordial, acolhedor e direto. Trate o cliente por 'você'."
+  horario_funcionamento:
+    seg_sex: "08:00-18:00"
+    sabado: "08:00-12:00"
+  limite_desconto_percentual: 10.0
+  topicos_proibidos: ["garantia de resultado", "diagnóstico", "prescrição de medicamentos"]
+  confianca_minima_handoff: 0.7
+  router_confidence_threshold: 0.6
+  min_similarity: 0.30
+
+canal:
+  tipo: whatsapp
+  provedor: evolution
+  instance_name: plantao          # a instância que o piloto já usa na Evolution
+  api_key_env: PILOTO_API_KEY
+  webhook_secret_env: PILOTO_WEBHOOK_SECRET
+
+documentos:
+  pasta: ../../tests/evals/docs_piloto
+
+teste_prontidao:
+  pergunta: "Qual o horário de atendimento aos sábados?"
+  esperado: ["8h", "12h"]

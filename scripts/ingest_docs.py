@@ -1,10 +1,11 @@
-"""CLI de ingestão de conhecimento (contrato: contracts/knowledge-cli.md).
+"""CLI de ingestão de conhecimento (contrato: contracts/knowledge-cli.md e tenants-cli.md).
 
-    python -m scripts.ingest_docs load <arquivo-ou-pasta>
-    python -m scripts.ingest_docs list
-    python -m scripts.ingest_docs remove <nome_origem> [--yes]
+    python -m scripts.ingest_docs load --tenant SLUG <arquivo-ou-pasta>
+    python -m scripts.ingest_docs list --tenant SLUG
+    python -m scripts.ingest_docs remove --tenant SLUG <nome_origem> [--yes]
 
-O tenant é sempre `PILOT_TENANT_ID`. Nenhum conteúdo de arquivo é impresso, só nome, contagens e custo.
+`--tenant` (o `slug` da empresa) é obrigatório: não existe empresa padrão (FR-021). Empresa encerrada é
+recusada. Nenhum conteúdo de arquivo é impresso, só nome, contagens e custo.
 """
 
 from __future__ import annotations
@@ -12,10 +13,10 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
+import uuid
 from collections.abc import Sequence
 from pathlib import Path
 
-from core.config import settings
 from core.llm.ports import LLMClient
 from core.rag.ingest import (
     STATUS_DE_FALHA,
@@ -24,6 +25,22 @@ from core.rag.ingest import (
     listar_documentos,
     remover_documento,
 )
+from core.tenancy import EmpresaNaoEncontrada, Estado, obter_por_slug
+from db.admin import admin_session, fechar_admin_engine
+from db.session import fechar_engine
+
+
+class EmpresaEncerrada(Exception):
+    """Documentos de empresa encerrada não podem mudar."""
+
+
+async def _resolver(slug: str) -> uuid.UUID:
+    """`slug` -> id da empresa, com o papel administrativo."""
+    async with admin_session() as s:
+        empresa = await obter_por_slug(s, slug)
+        if empresa.status == Estado.ENCERRADO.value:
+            raise EmpresaEncerrada(f"A empresa '{slug}' esta encerrada.")
+        return empresa.id
 
 
 def _linha(r: ResultadoIngestao) -> str:
@@ -40,11 +57,10 @@ def _arquivos(caminho: Path) -> list[Path]:
     return sorted(p for p in caminho.iterdir() if p.is_file()) if caminho.is_dir() else [caminho]
 
 
-async def _carregar(llm: LLMClient, caminho: Path) -> int:
+async def _carregar(llm: LLMClient, tenant_id: uuid.UUID, caminho: Path) -> int:
     if not await asyncio.to_thread(caminho.exists):
         print(f"Caminho não encontrado: {caminho}", file=sys.stderr)
         return 1
-    tenant_id = settings.tenant_piloto()
     codigo = 0
     for arquivo in await asyncio.to_thread(_arquivos, caminho):
         resultado = await ingerir_documento(
@@ -59,16 +75,16 @@ async def _carregar(llm: LLMClient, caminho: Path) -> int:
     return codigo
 
 
-async def _listar() -> int:
+async def _listar(tenant_id: uuid.UUID) -> int:
     print(f"{'nome_origem':<24}{'versao':>6}{'trechos':>9}  atualizado_em")
-    for d in await listar_documentos(settings.tenant_piloto()):
+    for d in await listar_documentos(tenant_id):
         print(
             f"{d.nome_origem:<24}{d.versao:>6}{d.num_trechos:>9}  {d.atualizado_em.strftime('%Y-%m-%dT%H:%M:%SZ')}"
         )
     return 0
 
 
-async def _remover(nome: str, confirmado: bool) -> int:
+async def _remover(tenant_id: uuid.UUID, nome: str, confirmado: bool) -> int:
     if not confirmado:
         resposta = await asyncio.to_thread(
             input, f"Remover '{nome}' e todos os seus trechos? [s/N] "
@@ -76,7 +92,7 @@ async def _remover(nome: str, confirmado: bool) -> int:
         if resposta.strip().lower() != "s":
             print("Cancelado.")
             return 1
-    if await remover_documento(settings.tenant_piloto(), nome):
+    if await remover_documento(tenant_id, nome):
         print(f"{nome}  REMOVIDO")
         return 0
     print(f"{nome}  NAO_ENCONTRADO")
@@ -85,39 +101,62 @@ async def _remover(nome: str, confirmado: bool) -> int:
 
 def _parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        prog="ingest_docs", description="Carrega a base de conhecimento do tenant piloto."
+        prog="ingest_docs", description="Carrega a base de conhecimento de uma empresa."
     )
     sub = p.add_subparsers(dest="comando", required=True)
-    carregar = sub.add_parser("load", help="carrega um arquivo ou todos os arquivos de uma pasta")
+
+    def com_empresa(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
+        parser.add_argument("--tenant", required=True, metavar="SLUG", help="slug da empresa")
+        return parser
+
+    carregar = com_empresa(
+        sub.add_parser("load", help="carrega um arquivo ou todos os arquivos de uma pasta")
+    )
     carregar.add_argument("caminho", type=Path)
-    sub.add_parser("list", help="lista os documentos")
-    remover = sub.add_parser("remove", help="remove um documento")
+    com_empresa(sub.add_parser("list", help="lista os documentos"))
+    remover = com_empresa(sub.add_parser("remove", help="remove um documento"))
     remover.add_argument("nome_origem")
     remover.add_argument("--yes", action="store_true", help="não pede confirmação")
     return p
 
 
 async def principal(argv: Sequence[str], llm: LLMClient | None = None) -> int:
-    args = _parser().parse_args(argv)
+    try:
+        args = _parser().parse_args(argv)
+    except SystemExit as exc:
+        return int(exc.code) if isinstance(exc.code, int) else 2
+    try:
+        tenant_id = await _resolver(args.tenant)
+    except (EmpresaNaoEncontrada, EmpresaEncerrada) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
     if args.comando == "list":
-        return await _listar()
+        return await _listar(tenant_id)
     if args.comando == "remove":
-        return await _remover(args.nome_origem, args.yes)
+        return await _remover(tenant_id, args.nome_origem, args.yes)
     if llm is not None:
-        return await _carregar(llm, args.caminho)
+        return await _carregar(llm, tenant_id, args.caminho)
     from apps.composition import (
         build_llm_client,  # import tardio: a CLI de list/remove não precisa de chave
     )
 
     cliente = build_llm_client()
     try:
-        return await _carregar(cliente, args.caminho)
+        return await _carregar(cliente, tenant_id, args.caminho)
     finally:
         await cliente.aclose()  # type: ignore[attr-defined]
 
 
+async def _executar(argv: Sequence[str]) -> int:
+    try:
+        return await principal(argv)
+    finally:
+        await fechar_admin_engine()
+        await fechar_engine()
+
+
 def main() -> None:
-    sys.exit(asyncio.run(principal(sys.argv[1:])))
+    sys.exit(asyncio.run(_executar(sys.argv[1:])))
 
 
 if __name__ == "__main__":

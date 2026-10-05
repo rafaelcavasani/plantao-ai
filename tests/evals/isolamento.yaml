@@ -1,0 +1,116 @@
+# Isolamento entre empresas (US3, SC-002): 30 perguntas por empresa, cada uma respondida só com a base própria.
+#
+# Cada empresa tem uma pasta de documentos em tests/evals/ e:
+#   - `perguntas`: a pergunta e o `esperado` (trechos que precisam aparecer na resposta, sem acento e em
+#     minúsculas, todos exigidos);
+#   - `marcadores`: expressões (sem acento, minúsculas) que existem SÓ nos documentos da empresa. Se aparecerem na
+#     resposta de OUTRA empresa, houve vazamento.
+empresas:
+  a:
+    nome: Clínica Sorriso
+    docs: docs_piloto
+    topicos_proibidos: ["garantia de resultado"]
+    marcadores: ["clinica sorriso", "acacias", "odonto vida", "sorriso saude"]
+    perguntas:
+      - {pergunta: "Que horas vocês abrem no sábado?", esperado: ["12"]}
+      - {pergunta: "Qual o horário de funcionamento de segunda a sexta?", esperado: ["18"]}
+      - {pergunta: "Vocês abrem no domingo?", esperado: ["fechado"]}
+      - {pergunta: "Qual o horário de atendimento aos sábados?", esperado: ["12"]}
+      - {pergunta: "A clínica funciona em feriados?", esperado: ["avisa"]}
+      - {pergunta: "Onde fica a clínica?", esperado: ["acacias"]}
+      - {pergunta: "Tem estacionamento?", esperado: ["gratuito"]}
+      - {pergunta: "Vocês atendem convênio?", esperado: ["odonto vida"]}
+      - {pergunta: "Quais convênios vocês aceitam?", esperado: ["sorriso saude"]}
+      - {pergunta: "Posso pagar no cartão de crédito?", esperado: ["6"]}
+      - {pergunta: "Aceitam Pix?", esperado: ["pix"]}
+      - {pergunta: "Como faço para agendar uma consulta?", esperado: ["recepcao"]}
+      - {pergunta: "A primeira avaliação é cobrada?", esperado: ["gratuita"]}
+      - {pergunta: "Quanto custa a limpeza dental?", esperado: ["150"]}
+      - {pergunta: "Qual o preço do clareamento a laser?", esperado: ["1.200"]}
+      - {pergunta: "Quanto é uma restauração simples?", esperado: ["220"]}
+      - {pergunta: "Qual o valor de uma extração simples?", esperado: ["280"]}
+      - {pergunta: "Quanto custa a aplicação de flúor?", esperado: ["90"]}
+      - {pergunta: "Quanto é a consulta de retorno?", esperado: ["80"]}
+      - {pergunta: "Tem desconto para pagamento à vista?", esperado: ["10%"]}
+      - {pergunta: "Posso cancelar uma consulta sem pagar nada?", esperado: ["24"]}
+      - {pergunta: "Qual a multa se eu cancelar de última hora?", esperado: ["50%"]}
+      - {pergunta: "Qual a tolerância de atraso?", esperado: ["15"]}
+      - {pergunta: "Menor de 18 anos precisa de acompanhante?", esperado: ["responsavel"]}
+      - {pergunta: "Quais documentos devo levar na primeira consulta?", esperado: ["foto"]}
+      - {pergunta: "A restauração tem garantia?", esperado: ["6 meses"]}
+      - {pergunta: "Se eu usar convênio, o que preciso levar?", esperado: ["carteirinha"]}
+      - {pergunta: "Posso remarcar a consulta?", esperado: ["24"]}
+      - {pergunta: "Qual o nome da clínica?", esperado: ["sorriso"]}
+      - {pergunta: "A clínica fica em qual rua?", esperado: ["acacias"]}
+  b:
+    nome: Clínica Aurora
+    docs: docs_empresa_b
+    topicos_proibidos: ["orçamento de ortodontia"]
+    marcadores: ["clinica aurora", "palmeiras", "vida plena", "aurora saude"]
+    perguntas:
+      - {pergunta: "Que horas vocês abrem de segunda a sexta?", esperado: ["19"]}
+      - {pergunta: "Qual o horário de atendimento aos sábados?", esperado: ["13"]}
+      - {pergunta: "Vocês abrem no domingo?", esperado: ["urgencia"]}
+      - {pergunta: "Funcionam em feriados?", esperado: ["11h"]}
+      - {pergunta: "Onde fica a clínica?", esperado: ["palmeiras"]}
+      - {pergunta: "Tem estacionamento?", esperado: ["2 horas"]}
+      - {pergunta: "Quais convênios vocês aceitam?", esperado: ["vida plena"]}
+      - {pergunta: "Vocês atendem o convênio Aurora Saúde?", esperado: ["aurora saude"]}
+      - {pergunta: "Posso parcelar no cartão de crédito?", esperado: ["10"]}
+      - {pergunta: "Tem desconto no Pix?", esperado: ["8%"]}
+      - {pergunta: "Como faço para agendar uma consulta?", esperado: ["aplicativo"]}
+      - {pergunta: "Quanto custa a primeira avaliação?", esperado: ["50,00"]}
+      - {pergunta: "A primeira avaliação inclui algum exame?", esperado: ["raio-x"]}
+      - {pergunta: "Quanto custa a limpeza dental?", esperado: ["180"]}
+      - {pergunta: "Qual o preço do clareamento a laser?", esperado: ["1.450"]}
+      - {pergunta: "Quanto é uma restauração simples?", esperado: ["260"]}
+      - {pergunta: "Qual o valor de uma extração simples?", esperado: ["310"]}
+      - {pergunta: "Quanto custa a aplicação de flúor?", esperado: ["110"]}
+      - {pergunta: "Quanto é a consulta de retorno?", esperado: ["100"]}
+      - {pergunta: "Quanto custa a manutenção do aparelho ortodôntico?", esperado: ["140"]}
+      - {pergunta: "Com quanta antecedência posso cancelar sem custo?", esperado: ["48"]}
+      - {pergunta: "Qual a multa se eu cancelar de última hora?", esperado: ["30%"]}
+      - {pergunta: "Qual a tolerância de atraso?", esperado: ["20"]}
+      - {pergunta: "Menor de 18 anos precisa de acompanhante?", esperado: ["responsavel legal"]}
+      - {pergunta: "O que devo levar na primeira consulta?", esperado: ["foto"]}
+      - {pergunta: "Qual a garantia da restauração?", esperado: ["12 meses"]}
+      - {pergunta: "Posso remarcar a consulta?", esperado: ["48"]}
+      - {pergunta: "Tem atendimento de urgência fora do horário?", esperado: ["plantao"]}
+      - {pergunta: "Tem espaço para crianças na sala de espera?", esperado: ["infantil"]}
+      - {pergunta: "Idosos têm prioridade?", esperado: ["prioridade"]}
+  c:
+    nome: Clínica Horizonte
+    docs: docs_empresa_c
+    topicos_proibidos: ["sedação"]
+    marcadores: ["clinica horizonte", "alameda dos ipes", "saude total"]
+    perguntas:
+      - {pergunta: "Que horas vocês abrem de segunda a sexta?", esperado: ["20"]}
+      - {pergunta: "Qual o horário de atendimento aos sábados?", esperado: ["15"]}
+      - {pergunta: "Vocês abrem no domingo?", esperado: ["fechado"]}
+      - {pergunta: "Funcionam em feriados?", esperado: ["aviso"]}
+      - {pergunta: "Onde fica a clínica?", esperado: ["alameda dos ipes"]}
+      - {pergunta: "Tem estacionamento?", esperado: ["30%"]}
+      - {pergunta: "Qual o convênio aceito?", esperado: ["saude total"]}
+      - {pergunta: "Quanto o paciente do convênio paga?", esperado: ["coparticipacao"]}
+      - {pergunta: "Posso parcelar no cartão de crédito?", esperado: ["4x"]}
+      - {pergunta: "Tem desconto à vista em dinheiro?", esperado: ["15%"]}
+      - {pergunta: "Como faço para agendar uma consulta?", esperado: ["site"]}
+      - {pergunta: "A primeira avaliação é cobrada?", esperado: ["cortesia"]}
+      - {pergunta: "Quanto custa a limpeza dental?", esperado: ["130"]}
+      - {pergunta: "Qual o preço do clareamento a laser?", esperado: ["980"]}
+      - {pergunta: "Quanto é uma restauração simples?", esperado: ["190"]}
+      - {pergunta: "Qual o valor de uma extração simples?", esperado: ["240"]}
+      - {pergunta: "Quanto custa a aplicação de flúor?", esperado: ["70"]}
+      - {pergunta: "Quanto é a consulta de retorno?", esperado: ["60"]}
+      - {pergunta: "Quanto custa a placa de bruxismo?", esperado: ["650"]}
+      - {pergunta: "Com quanta antecedência posso cancelar sem custo?", esperado: ["12 horas"]}
+      - {pergunta: "Qual a multa se eu cancelar de última hora?", esperado: ["20%"]}
+      - {pergunta: "Qual a tolerância de atraso?", esperado: ["10"]}
+      - {pergunta: "Menor de idade precisa de acompanhante?", esperado: ["16"]}
+      - {pergunta: "O que devo levar na primeira consulta?", esperado: ["encaminhamento"]}
+      - {pergunta: "Qual a garantia da restauração?", esperado: ["3 meses"]}
+      - {pergunta: "Posso remarcar a consulta?", esperado: ["12"]}
+      - {pergunta: "Vocês oferecem sedação?", esperado: ["nao oferecemos"]}
+      - {pergunta: "Tem acesso para cadeirantes?", esperado: ["rampa"]}
+      - {pergunta: "Oferecem café na espera?", esperado: ["cafe"]}
+      - {pergunta: "Qual o nome da clínica?", esperado: ["horizonte"]}
