@@ -1,0 +1,6 @@
+{
+  "name": "plantao-painel-web",
+  "private": true,
+  "type": "module",
+  "description": "Front-end estático do painel. Só declara o tipo de módulo para os testes com `node --test`."
+}

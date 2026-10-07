@@ -32,7 +32,10 @@ por operador (**429** `limite_excedido`, com `Retry-After`).
 | 409 | `empresa_encerrada` | edição de empresa encerrada (FR-039) |
 | 409 | `slug_em_uso`, `instancia_em_uso` | duplicidade (`ConexaoEmUso` do serviço) |
 | 409 | `prontidao_reprovada` | ativação com itens pendentes; traz `itens` |
-| 413 | `arquivo_grande` | arquivo acima do limite |
+| 413 | `arquivo_grande` | arquivo acima de 2 MB |
+| 404 | `conversa_nao_encontrada`, `remessa_nao_encontrada` | conversa de outra empresa ou inexistente; remessa expirada |
+| 409 | `exclusao_recusada` | apagar dados fora das condições (empresa não encerrada, drenagem, nome errado) |
+| 403 | `operador_nao_autorizado` | e-mail fora de `OPERADORES` no retorno do login |
 | 415 | `formato_nao_suportado` | extensão fora da lista |
 | 429 | `limite_excedido` | taxa por operador |
 | 503 | `dados_desatualizados` | só em `/admin/saude`; ver abaixo |
@@ -66,15 +69,15 @@ Todos os blocos trazem `atualizado_em` (FR-027). Parâmetro `periodo`: `hoje`, `
     "custo_usd": { "valor": 612.40, "anterior": 557.80 },
     "margem_usd": { "valor": 4120.10, "disponivel": true }
   },
-  "serie": [ { "inicio": "2026-09-10T03:00:00Z", "recebidas": 2450, "agente": 2210, "custo_usd": 61.2 } ],
+  "serie": [ { "inicio": "2026-09-10T03:00:00Z", "recebidas": 2450, "agente": 2210, "humano": 0, "handoffs": 12, "conversas": 80, "tokens": 91000, "custo_usd": 61.2 } ],
   "funil": { "conversas": 4100, "respondidas_agente": 3600, "handoff": 540, "resolvidas_humano": 468 },
-  "atencao": [ { "slug": "studio-fit", "nome": "Studio Fit Academia", "motivos": ["handoff_alto"], "detalhe": "taxa de handoff 37,6% (limite 30%)" } ]
+  "atencao": [ { "slug": "studio-fit", "nome": "Studio Fit Academia", "motivos": ["handoff_alto"], "gravidade": "aviso", "detalhe": "taxa de handoff 37,6% (limite 30%)" } ]
 }
 ```
 
 `anterior` é o período de mesma duração imediatamente anterior (FR-009). `atencao` usa os limites `PAINEL_LIMITE_*`
-(FR-011, FR-012); `motivos` ∈ `sem_atividade`, `handoff_alto`, `custo_alto`, `conexao_nao_verificada`, `falhas_envio`.
-`margem_usd.disponivel = false` quando algum plano em uso não tem preço.
+(FR-011, FR-012); `motivos` ∈ `sem_atividade`, `handoff_alto`, `custo_alto`, `conexao_nao_verificada`, `falhas_envio`; `gravidade` ∈ `critica`, `aviso`. O alerta de handoff só vale com pelo menos 5 conversas no período. Em `empresas[].atencao` cada item é `{codigo, gravidade, detalhe}`.
+`margem_usd.disponivel = false` (e `valor = null`) quando algum plano em uso não tem preço. `orcamento_pct` usa o custo dos últimos 30 dias (janela móvel) sobre o orçamento mensal do plano, qualquer que seja o `periodo` escolhido.
 
 ### `GET /admin/empresas`
 
@@ -187,9 +190,8 @@ Todas gravam auditoria com `operador = e-mail da sessão`, incrementam `tenants.
 
 `conexao` é opcional na criação (a empresa nasce `em_configuracao` e a conexão pode vir depois). Regras (FR-035), validadas
 no servidor com as mesmas funções do CLI: `slug` único, `^[a-z0-9]+(-[a-z0-9]+)*$`, ≤ 63; instância não usada por outra empresa;
-segredo ≥ 32 caracteres; chave não vazia; horário `HH:MM-HH:MM` ou `fechado`; números nas faixas de `ConfigEmpresa`. **201**
-com a ficha. Erros: 400 `validacao`, 409 `slug_em_uso` ou `instancia_em_uso`. Idempotência: repetir o mesmo corpo em um `slug`
-existente em `em_configuracao` completa o que falta, como `tenants create` (FR-034).
+segredo ≥ 32 caracteres; chave não vazia; horário `HH:MM-HH:MM` ou `fechado` (dia `fechado` fica sem chave em `horario_funcionamento`); números nas faixas de `ConfigEmpresa` (desconto 0 a 100, confiança 0 a 1, mensagens por minuto 1 a 6000, duração do handoff 1 a 1440). `slug` com 3 a 63 caracteres. Os erros de configuração vêm como `campos["configuracao.<campo>"]`, os de conexão como `campos["conexao.<campo>"]`. **201**
+com a ficha. Erros: 400 `validacao`, 409 `slug_em_uso` ou `instancia_em_uso`. Idempotência (FR-034): repetir o mesmo corpo (mesmo `slug` **e mesmo nome**) em uma empresa ainda `em_configuracao` completa o que falta, como `tenants create`. Slug de empresa em outro estado, ou com nome diferente, devolve 409 `slug_em_uso`. A empresa nova nasce na `versao` 1; só a alteração de uma existente incrementa.
 
 `segredo_entrega` e `chave_envio` entram só por aqui e por `PUT .../conexao`; nunca saem em nenhuma resposta.
 
@@ -198,8 +200,7 @@ existente em `em_configuracao` completa o que falta, como `tenants create` (FR-0
 Corpo: `{ "versao": 7, "nome"?, "nicho"?, "plano"?, "configuracao"?: {campos alterados} }`. `slug` não pode mudar (400 se enviado
 diferente). Só os campos que realmente mudam geram linha de auditoria, com valor anterior e novo (FR-037). Empresa encerrada:
 **409** `empresa_encerrada` (FR-039). Empresa suspensa é editável. `versao` desatualizada:
-**409** `conflito_versao` com `atual` (configuração e `versao` correntes) para a tela mostrar o conflito (FR-040). Sem alterações:
-**200** com `{ "alteracoes": 0 }` e sem tocar na versão.
+**409** `conflito_versao` com `atual` (configuração e `versao` correntes) para a tela mostrar o conflito (FR-040). A resposta é a ficha com o campo extra `alteracoes` (quantos campos mudaram). Sem alterações: **200** com `alteracoes = 0`, sem tocar na versão nem na auditoria.
 
 ### `PUT /admin/empresas/{slug}/conexao`  (substituir credenciais, FR-038)
 
@@ -218,16 +219,16 @@ diferente). Só os campos que realmente mudam geram linha de auditoria, com valo
 Dispara `avaliar_prontidao` e devolve `{ "aprovada": false, "itens": [...] }`. A conversa de teste continua sendo disparada
 pelo mesmo serviço do CLI, com o arquivo de teste da empresa, quando existir.
 
-### `POST /admin/empresas/{slug}/documentos`  (multipart, FR-041)
+### `POST /admin/empresas/{slug}/documentos`  (JSON, FR-041)
 
-Campo `arquivos` (até 10, ≤ 2 MB cada, `.md` ou `.txt`; nomes repetidos na remessa são recusados com 400). **202**
+Corpo `{ "arquivos": [ { "nome": "faq.md", "conteudo_base64": "..." } ] }`: até 10 arquivos, ≤ 2 MB cada (decodificados), extensões `.md`, `.txt` ou `.pdf` (as do ingestor); nomes repetidos na remessa são recusados com 400, formato inválido com 415 e arquivo grande com 413. Os bytes seguem em base64 dentro do JSON (sem `multipart`, para não acrescentar a dependência `python-multipart`). **202**
 `{ "remessa": "<id>" }`.
-`GET /admin/empresas/{slug}/documentos/remessas/{id}` → `{ "estado": "processando|concluida", "arquivos": [ { "nome", "status": "ok|inalterado|sem_texto|arquivo_grande|falha", "trechos": 12 } ], "base": { "documentos": 7, "trechos": 160 } }`.
+`GET /admin/empresas/{slug}/documentos/remessas/{id}` → `{ "estado": "processando|concluida", "arquivos": [ { "nome", "status": "ok|inalterado|sem_texto|nao_suportado|arquivo_grande|falha", "trechos": 12 } ], "base": { "documentos": 7, "trechos": 160 } }`.
 
 ### `POST /admin/empresas/{slug}/apagar-dados`  (P3, FR-025)
 
-Só para empresa `encerrada`. Primeiro `GET .../apagar-dados/resumo` devolve o que será removido (contagens por tabela); depois
-`POST` com `{ "confirmacao": "<nome exato>" }` chama `apagar_dados`. Exige papel `operacao` e confirmação por nome.
+Só para empresa `encerrada`. Primeiro `GET .../apagar-dados/resumo` (exige papel `operacao`) devolve o que será removido (contagens por tabela); depois
+`POST` com `{ "confirmacao": "<nome exato>" }` chama `apagar_dados` e respeita a drenagem (`PURGE_DRENAGEM_SEGUNDOS`). Exige papel `operacao` e confirmação por nome.
 
 ### `POST /admin/atualizar`  (FR-042)
 

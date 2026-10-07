@@ -75,7 +75,8 @@ async def test_tabela_tenants_tem_rls_forcado_e_politica(admin_engine: AsyncEngi
                 )
             )
         ).one()
-    assert linha == (True, True, 1)
+    # 2 políticas: o isolamento por empresa e a leitura do painel (`painel_leitura`, só SELECT, spec 004).
+    assert linha == (True, True, 2)
 
 
 @pytest.mark.parametrize(

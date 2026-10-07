@@ -23,6 +23,8 @@ from agents.orchestrator.state import ConfigTenant, Decisao, EntradaMensagem
 from core.handoff.service import registrar_handoff
 from core.handoff.textos import MOTIVO_FALHA_CANAL
 from core.observability.logging import definir_contexto, limpar_contexto
+from core.painel.agregacao import JANELA_PADRAO_HORAS, RETENCAO_DIAS, recalcular_todas
+from core.painel.remessas import processar_remessa
 from core.ports.channel import ChannelError, MessageChannel
 from core.security.crypto import get_cripto
 from core.tenancy import ConexaoAusente, carregar_conexao_canal
@@ -188,3 +190,29 @@ async def _gravar(
         s.add(resposta)
         await s.flush()
         return resposta.id
+
+
+async def agregar_painel(ctx: dict[str, Any]) -> dict[str, Any]:
+    """Cron do painel (a cada 2 min): recalcula as últimas horas de cada empresa (ADR-0008)."""
+    resultado = await recalcular_todas(janela_horas=JANELA_PADRAO_HORAS)
+    return {
+        "empresas": resultado.empresas,
+        "horas": resultado.horas,
+        "falhas": len(resultado.falhas),
+    }
+
+
+async def agregar_painel_diario(ctx: dict[str, Any]) -> dict[str, Any]:
+    """Cron diário: refaz os 2 últimos dias (correções tardias) e aplica a retenção de 400 dias."""
+    resultado = await recalcular_todas(janela_horas=48, retencao_dias=RETENCAO_DIAS)
+    return {
+        "empresas": resultado.empresas,
+        "horas": resultado.horas,
+        "falhas": len(resultado.falhas),
+    }
+
+
+async def ingerir_remessa(ctx: dict[str, Any], remessa: str) -> dict[str, Any]:
+    """Indexa os documentos enviados pelo painel (spec 004, FR-041). O resultado fica no Redis por 1 h."""
+    resultado = await processar_remessa(ctx["redis"], ctx["llm"], remessa)
+    return {"arquivos": len(resultado["arquivos"])}

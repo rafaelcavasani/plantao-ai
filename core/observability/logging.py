@@ -17,7 +17,14 @@ from typing import Any
 from core.config import settings
 from core.security.pii import mascarar_dados, mascarar_texto
 
-_CAMPOS_CONTEXTO = ("correlation_id", "tenant_id", "conversation_id")
+_CAMPOS_CONTEXTO = (
+    "correlation_id",
+    "tenant_id",
+    "conversation_id",
+    "operador",  # painel de operação (spec 004): e-mail de quem agiu
+    "rota",
+    "empresa",  # slug da empresa operada no painel
+)
 _contexto: contextvars.ContextVar[dict[str, str] | None] = contextvars.ContextVar(
     "log_contexto", default=None
 )

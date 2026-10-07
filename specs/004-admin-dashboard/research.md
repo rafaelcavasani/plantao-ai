@@ -100,8 +100,8 @@ Decisões tomadas na Fase 0 do plano. Cada uma segue o formato Decisão, Justifi
 
 ## R-09: Envio de documentos como job
 
-- **Decisão**: `POST /admin/empresas/{slug}/documentos` (multipart) valida extensão (`.md`, `.txt`, vindas de
-  `EXTENSOES_SUPORTADAS`), tamanho (≤ 2 MB por arquivo, ≤ 10 por remessa) e nomes repetidos, guarda os bytes no Redis por
+- **Decisão**: `POST /admin/empresas/{slug}/documentos` (JSON com os bytes em base64; `multipart` exigiria a dependência
+  `python-multipart`, que o projeto não tem) valida extensão (`EXTENSOES_SUPORTADAS`: `.md`, `.txt`, `.pdf`), tamanho (≤ 2 MB por arquivo, ≤ 10 por remessa) e nomes repetidos, guarda os bytes no Redis por
   1 h e enfileira `ingerir_remessa`. O job chama `core.rag.ingest.ingerir_documento` por arquivo e grava o resultado
   (`ok`, `inalterado`, `sem_texto`, `arquivo_grande`, `falha`, com trechos) em `painel:remessa:{id}`. A tela consulta
   `GET .../documentos/remessas/{id}` até terminar e mostra o resultado (FR-041).
@@ -117,8 +117,10 @@ Decisões tomadas na Fase 0 do plano. Cada uma segue o formato Decisão, Justifi
   orçamento" e "margem indisponível" (FR-043, FR-044). Leitura via `core/painel/planos.py`.
 - **Justificativa**: segue o padrão de `db/config_padrao.py`; 3 planos não pedem tabela nem tela de edição. A "alteração
   auditada" do FR-044 é atendida pelo histórico do git do arquivo e pela revisão do PR.
-- **Interpretação a confirmar**: se a intenção do FR-044 era trilha de auditoria *dentro* do painel, a evolução é uma
-  tabela `planos` com linha de auditoria global (hoje `audit_log.tenant_id` é obrigatório). Não bloqueia esta versão.
+- **Decidido (2026-10-07)**: a "alteração auditada" do FR-044 é atendida pelo histórico do git sobre `db/config_planos.py` e pela
+  revisão do pull request. Não haverá tabela `planos` nem linha de auditoria global nesta versão: `audit_log.tenant_id` é
+  obrigatório e a tabela de planos tem 3 linhas que mudam raramente. Se o negócio passar a alterar preços sem deploy, a evolução
+  é uma tabela `planos` com auditoria própria (nova spec).
 
 ## R-11: Frescor e botão "Atualizar"
 
@@ -152,8 +154,10 @@ Decisões tomadas na Fase 0 do plano. Cada uma segue o formato Decisão, Justifi
 - **Decisão**: `bloqueios_guardrail` conta linhas de `handoff_log` cujo `motivo` não é `falha_canal` nem baixa confiança
   (os guardrails de `core/guardrails` registram o motivo da decisão; ver `apps/worker/jobs.py`). `falhas_envio` conta
   `messages.status_envio = 'falha'` do agente.
-- **A confirmar na implementação**: a lista exata de motivos de guardrail (hoje `decisao.motivo or "desconhecido"`). Se não
-  houver motivo estável, o painel mostra só "handoffs por motivo" e remove o indicador separado.
+- **Resolvido na implementação**: os motivos de guardrail são `palavra_gatilho:<termo>`, `confianca_abaixo_do_minimo`,
+  `desconto_acima_do_limite` e os de saída; o indicador conta tudo menos `nao_texto`, `falha_canal`, `mensagem_vazia`,
+  `desconhecido`, `entrada_reprovada` e `saida_reprovada` (lista em `core/painel/agregacao.py`). Um guardrail novo entra no
+  indicador sem mudança; um motivo técnico novo precisa entrar na lista de exclusão.
 
 ## R-16: Observabilidade
 
@@ -179,3 +183,27 @@ Decisões tomadas na Fase 0 do plano. Cada uma segue o formato Decisão, Justifi
 
 Nenhum `NEEDS CLARIFICATION` ficou aberto no plano. A interpretação do FR-044 (R-10) e a lista de motivos de guardrail
 (R-15) são pontos de confirmação, não bloqueios.
+
+## R-19: Regras de atenção refinadas na implementação
+
+- **Decisão**: o alerta de handoff alto só vale com pelo menos 5 conversas no período (`AMOSTRA_MINIMA_CONVERSAS`), para uma
+  empresa com 1 conversa e 1 handoff não aparecer com 100%. "Sem atividade" vale só para empresa `ativo`; se ela nunca
+  recebeu mensagem, a referência é o tempo desde a ativação. Conexão não verificada alerta só empresa `ativo`. O custo usa a
+  janela móvel dos últimos 30 dias sobre o orçamento mensal do plano, qualquer que seja o período da tela. Empresa encerrada
+  nunca alerta.
+- **Justificativa**: evita falso alarme em empresas novas e mantém o alerta de custo comparável com o orçamento mensal.
+
+## R-20: Horário de funcionamento no formulário
+
+- **Decisão**: o formulário edita sete dias (`seg` a `dom`) mais qualquer chave que a empresa já tenha (por exemplo `seg_sex`
+  do onboarding por arquivo). Dia em branco ou `fechado` sai de `horario_funcionamento`; a lista de dias vem do dicionário
+  existente, sem migração. As faixas numéricas são as de `ConfigEmpresa` (a mesma validação do CLI): mensagens por minuto
+  vão até 6000.
+
+## R-21: Verificação do front-end
+
+- **Decisão**: além do `node --test` das funções puras, um teste de fumaça com `jsdom` roda os módulos reais contra a API
+  real (login de desenvolvimento, visão geral, ficha, estado, cadastro, edição, conversas e sessão expirada). `jsdom` fica
+  **fora do repositório** (instalado numa pasta temporária); não entra em `package.json` nem nos locks. Teste E2E em
+  navegador real continua fora desta versão (Complexity Tracking do plano).
+

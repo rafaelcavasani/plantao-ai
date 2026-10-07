@@ -286,7 +286,60 @@ Mede acerto de roteamento, groundedness, taxa de handoff, robustez adversarial, 
 | Resposta genérica ou handoff constante | `confianca_minima_handoff`/`min_similarity` muito altos para a base atual, ou base de conhecimento vazia/pequena | Revisar `tenant_config` (`config show`/`config set`) e confirmar `ingest_docs list` mostra trechos indexados. |
 | Testes de integração falham ao rodar localmente | Postgres/Redis fora do ar | `docker compose up -d` antes de `make test-integration`. |
 
-## 13. Referências
+## 13. Painel de operação (spec 004)
+
+O painel web (`/painel/`) mostra a carteira de empresas, a ficha de cada uma e permite mudar o estado, cadastrar e
+editar empresas. Ele usa a API `/admin/*`; o front-end é estático (`apps/dashboard/web/`) e não tem build.
+
+### Subir e entrar
+
+- **Desenvolvimento**: `make painel-seed` (dados de demonstração) e `make painel-dev`; abra
+  `http://localhost:8000/painel/`. O login de desenvolvimento só funciona com `ENV=development`: a API **recusa subir**
+  com `PAINEL_AUTH_MODE=dev` em qualquer outro ambiente.
+- **Desenvolvimento com login OIDC de verdade**: `docker compose up -d oidc` sobe o Dex (`http://localhost:5556/dex`) com os
+  usuários `operador@plantao.local` (operação) e `leitor@plantao.local` (leitura), senha `plantao123`
+  (`infra/dex/config.yaml`, só para desenvolvimento). Preencha no `.env` as variáveis `OIDC_*` e `OPERADORES` (valores em
+  `.env.example`), reinicie a API (`make api`) e abra `http://localhost:8000/painel/`.
+- **Produção**: login por OIDC (ADR-0007). Defina `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` e
+  `OIDC_REDIRECT_URI` (`https://<dominio>/admin/auth/retorno`), e a lista de operadores em `OPERADORES`
+  (`email:papel,email:papel`, papel `leitura` ou `operacao`). A API serve o painel atrás de HTTPS (o cookie é `Secure`).
+- O worker precisa estar no ar: ele roda o cron `agregar_painel` (a cada 2 minutos) que alimenta os números.
+
+### Operadores e papéis
+
+| Ação | Como |
+|---|---|
+| Adicionar ou remover operador | Editar `OPERADORES` no ambiente e reiniciar a API. Quem sai da lista perde a sessão na próxima requisição. |
+| Mudar o papel de alguém | Editar o papel em `OPERADORES`. O papel acompanha a lista, mesmo com sessão aberta. |
+| Encerrar a sessão de todos | Reiniciar o Redis ou apagar as chaves `painel:sessao:*`. |
+| Sessão | Expira em 30 min de inatividade e em 12 h no total (`PAINEL_SESSAO_*`). |
+
+### Banco: papel `plantao_painel`
+
+A migração `0005` cria o papel `plantao_painel` (só `SELECT`, sem acesso ao texto das mensagens, ao contato nem às
+credenciais). **Em produção defina `PAINEL_DB_PASSWORD` antes de rodar `alembic upgrade head`** e use a mesma senha em
+`DATABASE_PAINEL_URL`. Para trocar a senha depois: `ALTER ROLE plantao_painel PASSWORD '...'` e atualizar o ambiente.
+
+### Números desatualizados
+
+`GET /admin/saude` devolve a idade dos números; acima de 10 minutos devolve 503 `dados_desatualizados` (use para
+monitoramento externo) e a tela mostra um aviso. Causas e correção:
+
+| Sintoma | Causa provável | Como resolver |
+|---|---|---|
+| Aviso de dados desatualizados | Worker parado ou sem Redis | Subir `make worker`; conferir os logs `agregacao do painel concluida`. |
+| Empresa nova sem números | Ainda não passou o ciclo de 2 min | Botão **Atualizar** (enfileira o job e espera). |
+| Número diferente da base | Mensagem gravada fora da janela de 3 h | O job diário (03:00 UTC) refaz os 2 últimos dias; para forçar, rode `agregar_painel_diario`. |
+| `permission denied` em log do painel | Consulta tentou ler coluna que o papel não tem | É a proteção funcionando: corrigir a consulta, nunca conceder a coluna. |
+
+### Orçamento, preço e limites
+
+- Orçamento mensal e preço de cada plano ficam em `db/config_planos.py` e mudam por pull request (o histórico do git é a
+  trilha de alteração). Plano sem valor aparece como "sem orçamento" e "margem indisponível".
+- Limites de atenção: `PAINEL_LIMITE_SILENCIO_HORAS` (24), `PAINEL_LIMITE_HANDOFF_PCT` (30) e `PAINEL_LIMITE_CUSTO_PCT` (90).
+- O painel guarda 400 dias de linhas por hora (`painel_agregado_hora`); o `purge` de uma empresa remove as dela.
+
+## 14. Referências
 
 - [README.md](../README.md) — visão geral, stack, diagramas completos de arquitetura.
 - [RUNBOOK_INCIDENTE.md](RUNBOOK_INCIDENTE.md) — pausar/investigar/retomar uma empresa em produção.
@@ -294,4 +347,5 @@ Mede acerto de roteamento, groundedness, taxa de handoff, robustez adversarial, 
 - [specs/002-multitenancy/quickstart.md](../specs/002-multitenancy/quickstart.md) — passo a passo completo de multi-tenancy.
 - [specs/002-multitenancy/contracts/tenants-cli.md](../specs/002-multitenancy/contracts/tenants-cli.md) — contrato completo da CLI do operador.
 - [specs/002-multitenancy/contracts/onboarding-file.md](../specs/002-multitenancy/contracts/onboarding-file.md) — esquema do arquivo de onboarding.
-- [docs/adr/](adr/) — decisões de arquitetura (orquestrador em `agents`, fila `arq`, resolução por conexão, exclusão de dados).
+- [docs/adr/](adr/) — decisões de arquitetura (orquestrador em `agents`, fila `arq`, resolução por conexão, exclusão de dados, painel).
+- [specs/004-admin-dashboard/quickstart.md](../specs/004-admin-dashboard/quickstart.md) — validação ponta a ponta do painel.

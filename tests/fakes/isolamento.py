@@ -16,7 +16,7 @@ import uuid
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
 from sqlalchemy import select, text
@@ -36,6 +36,8 @@ from db.models import (
     Lead,
     LLMCall,
     Message,
+    PainelAgregadoHora,
+    PainelSituacao,
     ReadinessCheck,
     Tenant,
     TenantConfig,
@@ -155,6 +157,14 @@ ENTIDADES_COBERTAS: dict[str, Entidade] = {
         ReadinessCheck,
         lambda t, d: ReadinessCheck(tenant_id=t, operador="op", tipo="prontidao"),
     ),
+    "painel_agregado_hora": Entidade(
+        PainelAgregadoHora,
+        lambda t, d: PainelAgregadoHora(
+            tenant_id=t,
+            hora=datetime(2020, 1, 1, tzinfo=UTC) + timedelta(hours=int(_unico(), 16) % 100000),
+        ),
+    ),
+    "painel_situacao": Entidade(PainelSituacao, None),
     "audit_log": Entidade(
         AuditLog,
         lambda t, d: AuditLog(tenant_id=t, entidade="config", campo="x", operador="op"),
@@ -210,6 +220,8 @@ async def popular(engine: AsyncEngine, tenant_id: uuid.UUID) -> Dados:
                 LLMCall(tenant_id=tenant_id, finalidade="roteador", modelo="m", sucesso=True),
                 ReadinessCheck(tenant_id=tenant_id, operador="op", tipo="prontidao"),
                 AuditLog(tenant_id=tenant_id, entidade="config", campo="x", operador="op"),
+                PainelAgregadoHora(tenant_id=tenant_id, hora=datetime(2026, 1, 1, tzinfo=UTC)),
+                PainelSituacao(tenant_id=tenant_id),
             ]
         )
         await s.commit()

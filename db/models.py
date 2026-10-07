@@ -14,6 +14,7 @@ from decimal import Decimal
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     JSON,
+    BigInteger,
     Boolean,
     DateTime,
     Float,
@@ -27,7 +28,7 @@ from sqlalchemy import (
     func,
     text,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 from db.config_padrao import CONFIG_PADRAO, PALAVRAS_GATILHO_PADRAO
@@ -61,6 +62,9 @@ class Tenant(Base):
         DateTime(timezone=True), nullable=True
     )
 
+    versao: Mapped[int] = mapped_column(
+        Integer, default=1, server_default="1"
+    )  # concorrência otimista do painel (spec 004, FR-040)
     config: Mapped[TenantConfig] = relationship(back_populates="tenant", uselist=False)
 
 
@@ -372,3 +376,58 @@ class AuditLog(Base):
     valor_novo: Mapped[object | None] = mapped_column(JSON(none_as_null=True), nullable=True)
     operador: Mapped[str] = mapped_column(String(100))
     criado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class PainelAgregadoHora(Base):
+    """Agregado por empresa e hora (UTC) que alimenta o painel de operação (spec 004, ADR-0008).
+
+    Escrito só pelo job `agregar_painel`, sob `tenant_session`. Não guarda texto, contato nem identificador de
+    conversa. Chave primária `(tenant_id, hora)`.
+    """
+
+    __tablename__ = "painel_agregado_hora"
+
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id"), primary_key=True)
+    hora: Mapped[datetime] = mapped_column(DateTime(timezone=True), primary_key=True, index=True)
+    msgs_lead: Mapped[int] = mapped_column(Integer, default=0)
+    msgs_agente: Mapped[int] = mapped_column(Integer, default=0)
+    msgs_humano: Mapped[int] = mapped_column(Integer, default=0)
+    msgs_nao_texto: Mapped[int] = mapped_column(Integer, default=0)
+    conversas_iniciadas: Mapped[int] = mapped_column(Integer, default=0)
+    handoffs: Mapped[int] = mapped_column(Integer, default=0)
+    handoffs_resolvidos: Mapped[int] = mapped_column(Integer, default=0)
+    bloqueios_guardrail: Mapped[int] = mapped_column(Integer, default=0)
+    falhas_envio: Mapped[int] = mapped_column(Integer, default=0)
+    resp_n: Mapped[int] = mapped_column(Integer, default=0)
+    resp_soma_ms: Mapped[int] = mapped_column(BigInteger, default=0)
+    resp_hist: Mapped[list[int]] = mapped_column(JSONB, default=list)
+    intencoes: Mapped[dict[str, int]] = mapped_column(JSONB, default=dict)
+    tokens_entrada: Mapped[int] = mapped_column(BigInteger, default=0)
+    tokens_saida: Mapped[int] = mapped_column(BigInteger, default=0)
+    custo_usd: Mapped[Decimal] = mapped_column(Numeric(14, 6), default=Decimal(0))
+    custo_roteador: Mapped[Decimal] = mapped_column(Numeric(14, 6), default=Decimal(0))
+    custo_suporte: Mapped[Decimal] = mapped_column(Numeric(14, 6), default=Decimal(0))
+    custo_embedding: Mapped[Decimal] = mapped_column(Numeric(14, 6), default=Decimal(0))
+    custo_por_modelo: Mapped[dict[str, float]] = mapped_column(JSONB, default=dict)
+    atualizado_em: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class PainelSituacao(Base):
+    """Situação corrente de cada empresa para o painel (uma linha por empresa; spec 004, ADR-0008)."""
+
+    __tablename__ = "painel_situacao"
+
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id"), primary_key=True)
+    ultima_mensagem_em: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    ultimo_remetente: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    conversas_abertas: Mapped[int] = mapped_column(Integer, default=0)
+    conversas_handoff: Mapped[int] = mapped_column(Integer, default=0)
+    documentos: Mapped[int] = mapped_column(Integer, default=0)
+    trechos: Mapped[int] = mapped_column(Integer, default=0)
+    atualizado_em: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )

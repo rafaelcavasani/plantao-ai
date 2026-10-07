@@ -29,7 +29,7 @@ SUITE ?= todas
 .DEFAULT_GOAL := help
 
 .PHONY: help venv install up down reset-db migrate migration ingest ingest-list \
-	ingest-remove tenant-create tenant-list tenant-status tenant-readiness tenant-test tenant-activate tenant-suspend tenant-resume tenant-close tenant-purge api worker test test-unit test-integration test-adversarial cov \
+	ingest-remove tenant-create tenant-list tenant-status tenant-readiness tenant-test tenant-activate tenant-suspend tenant-resume tenant-close tenant-purge api worker painel-dev painel-seed test-web test test-unit test-integration test-adversarial cov \
 	lint format typecheck imports audit check evals
 
 help:
@@ -60,6 +60,10 @@ help:
 	@echo Execucao
 	@echo   make api               uvicorn com reload na porta 8000
 	@echo   make worker            worker arq
+	@echo Painel de operacao (spec 004)
+	@echo   make painel-dev        API com login de desenvolvimento em http://localhost:8000/painel/
+	@echo   make painel-seed       empresas e historico de demonstracao para o painel
+	@echo   make test-web          testes do front-end do painel, com node --test
 	@echo Testes e qualidade
 	@echo   make test              suite completa
 	@echo   make test-unit         sem Postgres nem Redis
@@ -141,6 +145,15 @@ api:
 
 worker:
 	$(PY) -m arq apps.worker.settings.WorkerSettings
+
+painel-dev:
+	$(PY) -m scripts.painel_dev
+
+painel-seed:
+	$(PY) -m scripts.painel_seed
+
+test-web:
+	node --test apps/dashboard/web/tests
 
 test:
 	$(PY) -m pytest -q

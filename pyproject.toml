@@ -37,6 +37,8 @@ testpaths = ["tests"]
 markers = [
     "integration: exige Postgres e Redis do docker-compose",
     "adversarial: casos adversariais de segurança (SC-003)",
+    "contract: contrato da API de operação do painel (exige Postgres)",
+    "lento: teste de carga/desempenho; rode com -m lento",
 ]
 
 [tool.coverage.run]

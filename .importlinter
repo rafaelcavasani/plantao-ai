@@ -19,6 +19,7 @@ layers =
 ignore_imports =
     db.session -> core.config
     db.admin -> core.config
+    db.painel -> core.config
     db.migrations.env -> core.config
 
 [importlinter:contract:core-isolado]
@@ -45,3 +46,14 @@ type = independence
 modules =
     agents.router
     agents.support
+
+[importlinter:contract:admin-so-na-escrita]
+name = so apps.api.admin.escrita importa db.admin
+type = forbidden
+source_modules =
+    apps
+forbidden_modules =
+    db.admin
+ignore_imports =
+    apps.api.admin.escrita -> db.admin
+

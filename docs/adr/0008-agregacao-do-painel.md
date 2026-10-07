@@ -1,6 +1,6 @@
 # ADR-0008: Agregação do painel em tabelas mantidas por job
 
-- Status: proposta
+- Status: aceita
 - Contexto da feature: [specs/004-admin-dashboard](../../specs/004-admin-dashboard/plan.md)
 - Refina: [ADR-0006](0006-leitura-entre-empresas-pela-api.md)
 

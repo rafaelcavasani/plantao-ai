@@ -26,7 +26,8 @@ Uma linha por empresa e hora (UTC). Chave primária `(tenant_id, hora)`. Índice
 | `msgs_nao_texto` | int | `messages.tipo = 'nao_texto'` |
 | `conversas_iniciadas` | int | `conversations.iniciado_em` na hora |
 | `handoffs` | int | linhas de `handoff_log` na hora |
-| `bloqueios_guardrail` | int | `handoff_log` com motivo de guardrail (research R-15) |
+| `handoffs_resolvidos` | int | linhas de `handoff_log` com `resolvido_por_humano` |
+| `bloqueios_guardrail` | int | `handoff_log` cujo `motivo` não está em `nao_texto`, `falha_canal`, `mensagem_vazia`, `desconhecido`, `entrada_reprovada`, `saida_reprovada` (research R-15) |
 | `falhas_envio` | int | `messages` do agente com `status_envio = 'falha'` |
 | `resp_n`, `resp_soma_ms` | int, bigint | par mensagem do contato → resposta do agente (`responde_a`) |
 | `resp_hist` | jsonb (int[11]) | histograma em baldes fixos (R-12) |

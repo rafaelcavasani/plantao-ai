@@ -1,0 +1,33 @@
+# Provedor OIDC LOCAL (Dex) para o login do painel em desenvolvimento. NÃO use em produção:
+# as senhas abaixo são públicas, o armazenamento é em memória e o endereço é http.
+# Em produção, aponte OIDC_ISSUER para o provedor real (Google, Entra ID, Keycloak...).
+issuer: http://localhost:5556/dex
+
+storage:
+  type: memory
+
+web:
+  http: 0.0.0.0:5556
+
+oauth2:
+  skipApprovalScreen: true
+
+staticClients:
+  - id: plantao-painel
+    name: Painel Plantão.AI (desenvolvimento)
+    secret: plantao-painel-dev-secret
+    redirectURIs:
+      - http://localhost:8000/admin/auth/retorno
+
+enablePasswordDB: true
+
+# Senha de todos os usuários de desenvolvimento: plantao123
+staticPasswords:
+  - email: operador@plantao.local
+    hash: "$2y$10$eGQATIjByEf/lkS.7OceRuJrM.slNLbOY8JLJNqRSKcqyZ.tOi/22"
+    username: operador
+    userID: 3f7a1c2e-0b1d-4c53-9a10-0a5e6f7b8c01
+  - email: leitor@plantao.local
+    hash: "$2y$10$eGQATIjByEf/lkS.7OceRuJrM.slNLbOY8JLJNqRSKcqyZ.tOi/22"
+    username: leitor
+    userID: 3f7a1c2e-0b1d-4c53-9a10-0a5e6f7b8c02

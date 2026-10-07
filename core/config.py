@@ -52,6 +52,25 @@ class Settings(BaseSettings):
 
     # Exclusão de dados de empresa: espera antes de apagar, para o worker terminar o que está em curso
     purge_drenagem_segundos: int = 120
+    # Painel de operação (spec 004). `database_painel_url` usa o papel `plantao_painel` (só leitura,
+    # sem acesso ao conteúdo das mensagens, ao contato nem às credenciais).
+    database_painel_url: str = (
+        "postgresql+asyncpg://plantao_painel:plantao_painel@localhost:5432/plantao"
+    )
+    painel_db_password: str = "plantao_painel"  # senha do papel criada pela migração 0005
+    operadores: str = ""  # "email:papel,email:papel"; papel = leitura | operacao
+    oidc_issuer: str = ""
+    oidc_client_id: str = ""
+    oidc_client_secret: str = ""
+    oidc_redirect_uri: str = ""
+    painel_auth_mode: str = "oidc"  # oidc | dev (dev só com ENV=development)
+    painel_sessao_inatividade_min: int = 30
+    painel_sessao_maxima_h: int = 12
+    painel_limite_silencio_horas: int = 24
+    painel_limite_handoff_pct: float = 30.0
+    painel_limite_custo_pct: float = 90.0
+    painel_escrita_por_minuto: int = 60
+
     # Guardrails padrão (podem ser sobrescritos por tenant em tenant_config)
     default_confidence_threshold: float = 0.7
 
@@ -61,6 +80,10 @@ class Settings(BaseSettings):
             "PII_ENCRYPTION_KEY": self.pii_encryption_key,
             "PII_HASH_KEY": self.pii_hash_key,
         }
+        if self.painel_auth_mode not in ("oidc", "dev"):
+            raise RuntimeError("PAINEL_AUTH_MODE deve ser 'oidc' ou 'dev'.")
+        if self.painel_auth_mode == "dev" and self.env != "development":
+            raise RuntimeError("PAINEL_AUTH_MODE=dev só é permitido com ENV=development.")
         ausentes = [nome for nome, valor in obrigatorios.items() if not valor]
         if ausentes:
             raise RuntimeError(

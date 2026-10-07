@@ -46,10 +46,12 @@ async def test_papel_da_aplicacao_nao_e_superusuario(db: AsyncEngine) -> None:
     assert row == (False, False)
 
 
-def test_registro_cobre_as_quinze_entidades_com_tenant_id() -> None:
+def test_registro_cobre_as_dezessete_entidades_com_tenant_id() -> None:
     assert sorted(ENTIDADES_COBERTAS) == sorted(
         [
             "tenant_config",
+            "painel_agregado_hora",
+            "painel_situacao",
             "tenant_knowledge",
             "knowledge_documents",
             "conversations",

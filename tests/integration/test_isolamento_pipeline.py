@@ -25,7 +25,7 @@ from tests.fakes.llm import FakeLLMClient
 from tests.fakes.pipeline import JID, consultar, contexto
 from tests.fakes.webhook import PERGUNTA, enviar, rodar_fila
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("relogio_do_limite")]
 
 RESPOSTA_A = "Aos sábados atendemos das 8h às 12h."
 RESPOSTA_B = "Aos sábados atendemos das 7h às 13h."

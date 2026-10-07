@@ -196,49 +196,70 @@ class ResultadoCriacao:
         return any(not p.ok for p in self.passos)
 
 
+async def garantir_empresa(
+    s: AsyncSession,
+    *,
+    slug: str,
+    nome_empresa: str,
+    nicho: str,
+    plano: str,
+    instance_name: str | None,
+    operador: str,
+) -> tuple[uuid.UUID, bool, str]:
+    """Cria a empresa em configuração ou atualiza nome, nicho e plano da existente (auditado).
+
+    Compartilhado pelo CLI (`criar_ou_continuar`) e pelo painel, para os dois produzirem o mesmo resultado.
+    `s` é administrativa e a transação é do chamador (sem commit). Devolve `(tenant_id, nova, estado)`.
+    `OnboardingRecusado` se a empresa está encerrada; `ConexaoEmUso` se a instância é de outra empresa.
+    """
+    existente = (await s.execute(select(Tenant).where(Tenant.slug == slug))).scalar_one_or_none()
+    dono = None
+    if instance_name is not None:
+        dono = (
+            await s.execute(
+                select(ChannelConnection.tenant_id).where(
+                    ChannelConnection.instance_name == instance_name
+                )
+            )
+        ).scalar_one_or_none()
+    if existente is not None and existente.status == Estado.ENCERRADO.value:
+        raise OnboardingRecusado(f"A empresa '{slug}' esta encerrada.")
+    if dono is not None and (existente is None or dono != existente.id):
+        raise ConexaoEmUso(f"A instancia '{instance_name}' ja esta em uso por outra empresa.")
+    if existente is None:
+        empresa = Tenant(
+            nome_empresa=nome_empresa,
+            slug=slug,
+            nicho=nicho,
+            plano=plano,
+            status=Estado.EM_CONFIGURACAO.value,
+        )
+        s.add(empresa)
+        await s.flush()
+        s.add(TenantConfig(tenant_id=empresa.id, **nova_config_padrao()))
+        await s.flush()
+        return empresa.id, True, empresa.status
+    for campo, novo in (("nome_empresa", nome_empresa), ("nicho", nicho), ("plano", plano)):
+        anterior = getattr(existente, campo)
+        if anterior != novo:
+            await registrar_mudanca(s, existente.id, "config", campo, anterior, novo, operador)
+            setattr(existente, campo, novo)
+    return existente.id, False, existente.status
+
+
 async def _empresa(
     sessao_admin: SessaoAdmin, arquivo: ArquivoEmpresa, operador: str
 ) -> tuple[uuid.UUID, bool, str]:
     async with sessao_admin() as s:
-        existente = (
-            await s.execute(select(Tenant).where(Tenant.slug == arquivo.slug))
-        ).scalar_one_or_none()
-        dono = (
-            await s.execute(
-                select(ChannelConnection.tenant_id).where(
-                    ChannelConnection.instance_name == arquivo.canal.instance_name
-                )
-            )
-        ).scalar_one_or_none()
-        if existente is not None and existente.status == Estado.ENCERRADO.value:
-            raise OnboardingRecusado(f"A empresa '{arquivo.slug}' esta encerrada.")
-        if dono is not None and (existente is None or dono != existente.id):
-            raise ConexaoEmUso(
-                f"A instancia '{arquivo.canal.instance_name}' ja esta em uso por outra empresa."
-            )
-        if existente is None:
-            empresa = Tenant(
-                nome_empresa=arquivo.nome_empresa,
-                slug=arquivo.slug,
-                nicho=arquivo.nicho,
-                plano=arquivo.plano,
-                status=Estado.EM_CONFIGURACAO.value,
-            )
-            s.add(empresa)
-            await s.flush()
-            s.add(TenantConfig(tenant_id=empresa.id, **nova_config_padrao()))
-            await s.flush()
-            return empresa.id, True, empresa.status
-        for campo, novo in (
-            ("nome_empresa", arquivo.nome_empresa),
-            ("nicho", arquivo.nicho),
-            ("plano", arquivo.plano),
-        ):
-            anterior = getattr(existente, campo)
-            if anterior != novo:
-                await registrar_mudanca(s, existente.id, "config", campo, anterior, novo, operador)
-                setattr(existente, campo, novo)
-        return existente.id, False, existente.status
+        return await garantir_empresa(
+            s,
+            slug=arquivo.slug,
+            nome_empresa=arquivo.nome_empresa,
+            nicho=arquivo.nicho,
+            plano=arquivo.plano,
+            instance_name=arquivo.canal.instance_name,
+            operador=operador,
+        )
 
 
 async def criar_ou_continuar(

@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-06
 
-**Status**: Draft
+**Status**: Implementada e validada
 
 **Input**: User description: "Criar um front-end onde tenha o gerenciamento dos tenants, um dashboard com agregações e informações de cada tenant, como número de mensagens, status, última mensagem, etc."
 
@@ -181,7 +181,7 @@ Na ficha da empresa, o operador vê a lista das conversas recentes (identificado
 - **FR-038**: (P2) As credenciais já cadastradas NUNCA DEVEM ser devolvidas ao navegador; o formulário mostra "configuradas" e só aceita novos valores por ação explícita, que passa a exigir nova verificação da conexão.
 - **FR-039**: (P2) Empresa encerrada NÃO DEVE ser editável; empresa suspensa PODE ter configuração e documentos editados, sem mudar o estado.
 - **FR-040**: (P2) Duas edições simultâneas da mesma empresa NÃO DEVEM se sobrescrever sem aviso: o painel DEVE detectar que a empresa mudou desde que o formulário foi aberto e mostrar o conflito.
-- **FR-041**: (P2) O envio de documentos DEVE aceitar só formatos de texto suportados pelo ingestor (hoje `.md` e `.txt`) até um tamanho máximo por arquivo, recusar nomes repetidos na mesma remessa e mostrar o resultado do processamento (documentos e trechos criados) na ficha.
+- **FR-041**: (P2) O envio de documentos DEVE aceitar só os formatos suportados pelo ingestor (hoje `.md`, `.txt` e `.pdf`) até um tamanho máximo por arquivo, recusar nomes repetidos na mesma remessa e mostrar o resultado do processamento (documentos e trechos criados) na ficha.
 - **FR-025**: (P3) O apagamento de dados de empresa encerrada (`purge`) DEVE continuar disponível só com a confirmação por nome e permissão de operação; DEVE mostrar o resumo do que será apagado antes.
 
 **Qualidade da informação**

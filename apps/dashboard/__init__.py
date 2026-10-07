@@ -1,5 +1,6 @@
-"""Painel interno de observabilidade (Streamlit/Retool) — Sprint 6.
+"""Painel de operação das empresas (spec 004, ADR-0005).
 
-Mostrará, por tenant: custo de API, volume de conversas, taxa de
-handoff e principais erros — ver seção 8.2 e 8.10 da especificação.
+O front-end é estático e mora em `web/` (HTML, CSS e módulos ES, sem build). A API o serve em `/painel/` e ele só
+fala com `/admin/*` (`apps/api/admin`). Não há código Python do painel aqui: a regra e as consultas ficam em
+`core/painel`.
 """

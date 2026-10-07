@@ -1,18 +1,17 @@
 # Quickstart: validar o painel de ponta a ponta
 
-Guia de validação, não de implementação. Os comandos de `make` marcados com (novo) passam a existir quando a feature for
-implementada. Contratos em [contracts/](contracts/), modelo em [data-model.md](data-model.md).
+Guia de validação. Os comandos `make painel-dev`, `make painel-seed` e `make test-web` já existem. Contratos em [contracts/](contracts/), modelo em [data-model.md](data-model.md).
 
 ## Pré-requisitos
 
 - Docker Desktop com Postgres e Redis (`make up`), venv instalado (`make install`), migrações aplicadas (`make migrate`, inclui `0005_painel`).
 - `.env` com as chaves de PII e, para o painel em desenvolvimento: `PAINEL_AUTH_MODE=dev`, `OPERADORES=voce@exemplo.com:operacao,leitor@exemplo.com:leitura`, `DATABASE_PAINEL_URL` e `PAINEL_DB_PASSWORD`.
-- Duas ou três empresas de teste com mensagens (use `docs/exemplos/` e o `make tenant-create` existente; um script de dados de demonstração (novo) `make painel-seed` cria histórico de 30 dias).
+- Empresas de teste com mensagens: `make painel-seed` cria 5 empresas fictícias (uma suspensa, uma em configuração) com 30 dias de histórico e roda a agregação. Para o cadastro, use também `docs/exemplos/empresa-modelo.yml` com `make tenant-create`.
 
 ## 1. Subir
 
 ```text
-make api          # API em http://localhost:8000
+make painel-dev  # API em http://localhost:8000 com o login de desenvolvimento (só com ENV=development)
 make worker       # worker, que roda o cron agregar_painel a cada 2 min
 ```
 
@@ -39,7 +38,7 @@ Abrir `http://localhost:8000/painel/`. Em modo `dev` o login entra direto como o
 | 15 | Documentos | Enviar `.md` válido, `.txt` repetido e `.exe` | Remessa mostra `ok` / recusa nome repetido / recusa formato; contagem na ficha sobe | FR-041 |
 | 16 | Sessão | Esperar `PAINEL_SESSAO_INATIVIDADE_MIN` (ou reduzir a 1) e agir | Volta ao login e retorna à tela de origem | FR-006 |
 | 17 | Isolamento | `make test` (suíte de isolamento com duas empresas + painel) | Verde; a soma da visão geral é a soma das duas empresas | Constituição III |
-| 18 | Desempenho | Com 50 empresas e ~1 milhão de mensagens (script de carga) abrir `#/` e uma ficha | ≤ 3 s cada, medido no navegador | SC-002 |
+| 18 | Desempenho | `pytest -m lento tests/integration/test_painel_desempenho.py` (50 empresas, ~1 milhão de mensagens) | ≤ 3 s por rota; medido: visão geral 0,29 s, ficha 0,17 s | SC-002 |
 | 19 | Celular | Abrir `#/`, `#/empresas`, `#/empresa/<slug>` em 390 px | Sem rolagem horizontal da página; menu sobreposto | SC-008 |
 
 ## 3. Testes automatizados
@@ -47,7 +46,8 @@ Abrir `http://localhost:8000/painel/`. Em modo `dev` o login entra direto como o
 ```text
 make test-unit                       # inclui tests/unit/painel
 make test                            # inclui integração (Postgres/Redis) e contrato de /admin/*
-node --test apps/dashboard/web/tests # funções puras do front-end
+make test-web                        # funções puras do front-end (node --test)
+pytest -m lento tests/integration/test_painel_desempenho.py   # SC-002: 50 empresas e ~1 milhão de mensagens
 make lint && make typecheck          # ruff, mypy e import-linter (contrato novo da sessão administrativa)
 ```
 
@@ -56,3 +56,22 @@ make lint && make typecheck          # ruff, mypy e import-linter (contrato novo
 - Adicionar ou remover operador: editar `OPERADORES` no ambiente e reiniciar a API.
 - Painel "desatualizado": conferir se o worker está no ar (cron `agregar_painel`); `GET /admin/saude` mostra a idade dos dados.
 - Alterar orçamento ou preço de plano: PR em `db/config_planos.py`.
+
+## 5. O que cada cenário já tem de prova automatizada
+
+| Cenários | Prova |
+|---|---|
+| 1, 2, 3, 4 | `tests/integration/test_painel_visao_geral.py`, `test_painel_ficha.py`, `test_painel_agregacao.py` |
+| 5, 6 | `tests/contract/test_admin_leitura.py`, `tests/integration/test_painel_privilegios.py` |
+| 7, 8, 9, 10 | `tests/integration/test_painel_estado.py` |
+| 11, 12, 13, 14, 15 | `tests/integration/test_painel_cadastro.py` |
+| 16 | `tests/unit/test_painel_auth.py`, `tests/contract/test_admin_seguranca.py` |
+| 17 | `tests/integration/test_isolamento_*.py`, `test_painel_isolamento.py` |
+| 18 | `tests/integration/test_painel_desempenho.py` (marcado `lento`) |
+| 19 | Chrome real a 390 px: `scripts/painel_e2e/navegador-real.mjs` (ver `checklists/ui.md`) |
+
+Além disso, dois scripts opcionais em `scripts/painel_e2e/` (dependências fora do projeto) repetem a verificação:
+`fumaca-jsdom.mjs` carrega o front real contra a API real e exercita login, visão geral, empresas, ficha, suspensão e retomada,
+encerramento com nome exato, cadastro com validação, edição, conversas e sessão inválida; `navegador-real.mjs` mede, em Chrome de
+verdade, CSP, `axe-core` WCAG 2.1 AA, rolagem horizontal a 390/768/1000 px, colunas dos KPIs, menu do celular, foco preso na janela,
+movimento reduzido e fontes.

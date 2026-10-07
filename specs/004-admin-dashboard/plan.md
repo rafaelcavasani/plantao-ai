@@ -152,7 +152,7 @@ Python novo se divide em `apps/api/admin` (borda HTTP), `core/painel` (regra e c
 | Papel de banco `plantao_painel` e política de leitura entre empresas (exceção ao princípio III) | A visão geral soma todas as empresas; precisa ler entre empresas sem papel administrativo no processo web | Ler empresa por empresa com `tenant_session` não soma no banco e daria à API acesso ao conteúdo das mensagens |
 | Job de agregação + duas tabelas novas | Cumprir SC-002 (3 s com 1 milhão de mensagens) e FR-042 (≤ 5 min) sem pesar no banco do atendimento | Consulta direta em `messages`/`llm_calls` a cada abertura: lenta e disputa recursos com o atendimento |
 | Nova dependência `PyJWT[crypto]` | Validar assinatura do `id_token` OIDC (obrigatório para a identidade real, ADR-0007) | Validar JWT à mão com `cryptography`: mais código de segurança próprio e mais risco |
-| Sem teste E2E de navegador nesta versão | Evitar nova ferramenta (Playwright) enquanto a interface é pequena | Adicionar Playwright agora: dependência e infraestrutura de CI que ainda não se pagam; reavaliar na spec seguinte |
+| Teste de navegador fora do CI | `scripts/painel_e2e/` roda Chrome real (`playwright-core`, `axe-core`) e `jsdom` sob demanda, com as dependências instaladas só naquela pasta | Colocar Playwright no CI e no `package.json` do projeto: dependência e infraestrutura que ainda não se pagam para 4 telas; reavaliar quando a interface crescer |
 
 ## Pós-desenho: Constitution Check (reavaliação)
 

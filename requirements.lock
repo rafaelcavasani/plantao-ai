@@ -150,7 +150,9 @@ pydantic-core==2.46.5
 pydantic-settings==2.15.0
     # via -r requirements.txt
 pyjwt==2.15.1
-    # via redis
+    # via
+    #   -r requirements.txt
+    #   redis
 pypdf==6.19.0
     # via -r requirements.txt
 python-dotenv==1.2.4
@@ -215,6 +217,8 @@ typing-inspection==0.4.4
     #   fastapi
     #   pydantic
     #   pydantic-settings
+tzdata==2026.5
+    # via -r requirements.txt
 urllib3==2.8.0
     # via requests
 uuid-utils==0.17.1

@@ -295,6 +295,8 @@ _ORDEM_DA_SAIDA: Final = (
     "leads",
     "cobrancas",
     "metricas",
+    "painel_horas",
+    "painel_situacao",
     "prontidoes",
     "credenciais",
     "conexoes",

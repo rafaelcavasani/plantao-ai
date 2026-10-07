@@ -24,7 +24,14 @@ _APP_URL = os.environ.get(
     "TEST_DATABASE_URL", "postgresql+asyncpg://plantao_app:plantao_app@localhost:5432/plantao_test"
 )
 
+_PAINEL_URL = os.environ.get(
+    "TEST_DATABASE_PAINEL_URL",
+    "postgresql+asyncpg://plantao_painel:plantao_painel@localhost:5432/plantao_test",
+)
+
 os.environ["ENV"] = "test"
+os.environ["DATABASE_PAINEL_URL"] = _PAINEL_URL
+os.environ["OPERADORES"] = "operador@exemplo.com:operacao,leitor@exemplo.com:leitura"
 os.environ["DATABASE_URL"] = _APP_URL
 os.environ["DATABASE_ADMIN_URL"] = _ADMIN_URL
 os.environ["APP_DB_PASSWORD"] = "plantao_app"
@@ -44,6 +51,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engin
 from sqlalchemy.pool import NullPool  # noqa: E402
 
 from db.models import ChannelConnection, ChannelCredential, Tenant, TenantConfig  # noqa: E402
+from tests.fakes.painel import AdminApi  # noqa: E402
 
 RAIZ = Path(__file__).resolve().parent.parent
 
@@ -99,7 +107,7 @@ async def db(admin_engine: AsyncEngine) -> AsyncIterator[AsyncEngine]:
                 "TRUNCATE readiness_checks, audit_log, channel_credentials, channel_connections, "
                 "handoff_log, llm_calls, messages, conversations, leads, appointments, "
                 "billing_events, usage_metrics, tenant_knowledge, knowledge_documents, "
-                "tenant_config, tenants CASCADE"
+                "painel_agregado_hora, painel_situacao, tenant_config, tenants CASCADE"
             )
         )
     yield admin_engine
@@ -203,3 +211,48 @@ async def tenant_b(db: AsyncEngine) -> uuid.UUID:
 @pytest_asyncio.fixture
 async def tenant_c(db: AsyncEngine) -> uuid.UUID:
     return await criar_tenant(db, "Clínica C")
+
+
+@pytest_asyncio.fixture
+async def admin_api(db: AsyncEngine) -> AsyncIterator["AdminApi"]:  # noqa: UP037
+    """API de operação do painel com Redis e fila falsos e sessões criadas direto no Redis (spec 004)."""
+    import httpx
+    from fakeredis import FakeAsyncRedis
+
+    from apps.api.admin.escrita import get_canal
+    from apps.api.deps import get_queue, get_redis
+    from apps.api.main import app
+    from tests.fakes.channel import FakeChannel, FakeQueue
+    from tests.fakes.painel import BASE, AdminApi
+
+    redis = FakeAsyncRedis()
+    fila = FakeQueue()
+    canal = FakeChannel()
+    app.dependency_overrides[get_redis] = lambda: redis
+    app.dependency_overrides[get_queue] = lambda: fila
+    app.dependency_overrides[get_canal] = lambda: canal
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=BASE) as cliente:
+        yield AdminApi(cliente, redis, fila, canal)
+    app.dependency_overrides.clear()
+    await redis.aclose()
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """Testes marcados `lento` (carga de 1 milhão de mensagens) só rodam com `-m lento`."""
+    if "lento" in (config.getoption("-m") or ""):
+        return
+    pular = pytest.mark.skip(reason="teste lento: rode com `-m lento`")
+    for item in items:
+        if "lento" in item.keywords:
+            item.add_marker(pular)
+
+
+@pytest.fixture
+def relogio_do_limite(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Congela a janela de 1 minuto do limite de mensagens (`rl:{tenant}:{minuto}`).
+
+    Sem isso, um teste que envia várias mensagens pode atravessar a virada do minuto e contar em duas chaves.
+    """
+    from types import SimpleNamespace
+
+    monkeypatch.setattr("apps.api.ratelimit.time", SimpleNamespace(time=lambda: 1_700_000_040.0))

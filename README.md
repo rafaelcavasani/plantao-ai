@@ -443,6 +443,20 @@ arq apps.worker.settings.WorkerSettings
 
 `GET /health` responde na porta 8000. O webhook é `POST /webhooks/whatsapp` com o token configurado.
 
+### Painel de operação
+
+```powershell
+make painel-seed     # empresas e histórico de demonstração
+make painel-dev      # API com login de desenvolvimento
+make worker          # em outro terminal: alimenta os números do painel
+```
+
+Abra `http://localhost:8000/painel/`. Visão geral, ficha de cada empresa, mudança de estado e cadastro/edição ficam na
+mesma tela, com o design system do projeto (`design-system/`). O front-end é estático (`apps/dashboard/web/`, sem build) e
+os testes dele rodam com `make test-web`. Em produção o login é por OIDC e a lista de operadores vem de `OPERADORES`
+(ver o [runbook](docs/RUNBOOK_OPERACIONAL.md#13-painel-de-operação-spec-004)). Especificação, plano e contratos em
+[specs/004-admin-dashboard](specs/004-admin-dashboard/spec.md).
+
 O passo a passo completo do multi-tenancy (onboarding, isolamento entre empresas, suspensão e exclusão) está em
 [specs/002-multitenancy/quickstart.md](specs/002-multitenancy/quickstart.md); o fluxo original de roteador e
 suporte, em [specs/001-router-support-agent/quickstart.md](specs/001-router-support-agent/quickstart.md).

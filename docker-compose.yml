@@ -17,5 +17,16 @@ services:
     ports:
       - "6379:6379"
 
+  # Provedor OIDC local para o login do painel (só desenvolvimento). Ver infra/dex/config.yaml.
+  # Usuários: operador@plantao.local (operação) e leitor@plantao.local (leitura); senha: plantao123.
+  oidc:
+    image: ghcr.io/dexidp/dex:v2.41.1
+    restart: unless-stopped
+    command: ["dex", "serve", "/etc/dex/config.yaml"]
+    ports:
+      - "5556:5556"
+    volumes:
+      - ./infra/dex/config.yaml:/etc/dex/config.yaml:ro
+
 volumes:
   plantao_pg_data:
