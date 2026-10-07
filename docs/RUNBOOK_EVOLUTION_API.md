@@ -15,8 +15,7 @@ Wrapper de código aberto para o WhatsApp Business API. Você:
 - Repo: https://github.com/EvolutionAPI/evolution-api
 - Docs: https://evolution-api.com/docs
 
-**Por quê?** Não dependemos de aprovação da Meta; controle total do webhooks; a mesma interface funciona local e em
-produção com seu próprio hardware.
+**Por quê?** Não dependemos de aprovação da Meta; controle total do webhooks; a mesma interface funciona local e em produção com seu próprio hardware.
 
 ## 2. Infraestrutura local (MVP)
 
@@ -103,8 +102,8 @@ WHATSAPP_BASE_URL=https://evolution.sua-empresa.com
 A instância recebe um nome único; é o `instance_name` do arquivo de onboarding.
 
 ```powershell
-$instance = "clinica-sorriso"
-$evolutionApiKey = "sua-chave-api-super-secreta"
+$instance = "rafael"
+$evolutionApiKey = "429683C4C977415CAAFCCE10F7D57E11"
 
 # POST /instance/create
 $body = @{
@@ -187,14 +186,17 @@ Toda mensagem recebida no WhatsApp é entregue à sua aplicação por um webhook
 aonde mandar.
 
 ```powershell
-$instance = "clinica-sorriso"
-$webhookUrl = "http://localhost:3000/webhooks/whatsapp"  # sua API, não Evolution
-$webhookSecret = "seu-segredo-de-webhook-min-32-caracteres-aqui"
+$instance = "rafael"
+$webhookUrl = "http://localhost:8000/webhooks/whatsapp"  # sua API, não Evolution
+$webhookSecret = "UWAEmLaO8hDpM--c1pD1kSgT9q8gThU-WcxVrzzr7cGL8OAgqe8uRY6FPJoCX-cs"
 
 $body = @{
-    url = $webhookUrl
-    headers = @{
-        "X-Webhook-Token" = $webhookSecret
+    webhook = @{
+        enabled = 1
+        url = $webhookUrl
+        headers = @{
+            "X-Webhook-Token" = $webhookSecret
+        }
     }
 } | ConvertTo-Json
 
@@ -374,6 +376,305 @@ curl -X GET "http://localhost:8080/instance/connect/clinica-sorriso" `
 - Webhook secret ≥ 32 caracteres, aleatório
 - Logs mascarados: telefone, conteúdo, tokens/chaves nunca impressas (garantido pela aplicação)
 - `DATABASE_ADMIN_URL` nunca usado em container públicos; papel administrativo só em máquinas exclusivas de script
+
+## 11. Teste sem número de telefone (apenas webhook)
+
+Se você quer testar a integração webhook **sem conectar um número de WhatsApp real** (útil para CI/CD, testes de
+desenvolvimento isolados ou demonstrações), há dois caminhos:
+
+### 11.1 Caminho A: Simular mandatórios da Evolution via cURL/script
+
+Crie a instância normalmente, mas **não escaneie o QR code**. A Evolution aceita chamadas à API mesmo sem
+conexão ativa. A Plantão.AI não valida essa condição no webhook, apenas na `readiness` check.
+
+#### 11.1.1 Criar instância (sem QR)
+
+```powershell
+$instance = "test-instance"
+$evolutionApiKey = "429683C4C977415CAAFCCE10F7D57E11"
+
+$body = @{
+    instanceName = $instance
+} | ConvertTo-Json
+
+$response = curl -X POST http://localhost:8080/instance/create `
+  -H "Content-Type: application/json" `
+  -H "apikey: $evolutionApiKey" `
+  -d $body
+
+$apiKey = ($response | ConvertFrom-Json).instance.apiKeys[0].apiKey
+Write-Host "API Key da instância: $apiKey"
+```
+
+**Não escaneie o QR code.**
+
+#### 11.1.2 Registrar webhook na instância
+
+```powershell
+$instance = "test-instance"
+$webhookUrl = "http://localhost:8000/webhooks/whatsapp"
+$webhookSecret = "UWAEmLaO8hDpM--c1pD1kSgT9q8gThU-WcxVrzzr7cGL8OAgqe8uRY6FPJoCX-cs"
+
+$body = @{
+    webhook = @{
+        enabled = 1
+        url = $webhookUrl
+        headers = @{
+            "X-Webhook-Token" = $webhookSecret
+        }
+    }
+} | ConvertTo-Json
+
+curl -X POST "http://localhost:8080/webhook/set/$instance" `
+  -H "Content-Type: application/json" `
+  -H "apikey: $evolutionApiKey" `
+  -d $body
+
+Write-Host "Webhook registrado para $webhookUrl"
+```
+
+#### 11.1.3 Simular mensagem manualmente via curl
+
+A Evolution API **não possui endpoint nativo para simular mensagens de entrada**, mas você pode enviar webhooks
+diretamente para sua aplicação (simulando o que Evolution faria):
+
+```powershell
+# Script PowerShell: test-webhook.ps1
+# Simula um webhook de mensagem recebida
+
+param(
+    [string]$InstanceName = "test-instance",
+    [string]$WebhookSecret = "UWAEmLaO8hDpM--c1pD1kSgT9q8gThU-WcxVrzzr7cGL8OAgqe8uRY6FPJoCX-cs",
+    [string]$WebhookUrl = "http://localhost:8000/webhooks/whatsapp",
+    [string]$Message = "Olá, qual o horário de funcionamento?",
+    [string]$FromNumber = "5585999999999"  # simulate incoming number
+)
+
+# Payload conforme Evolution API especifica
+$payload = @{
+    event = "messages.upsert"
+    instance = $InstanceName
+    data = @{
+        key = @{
+            remoteJid = "${FromNumber}@s.whatsapp.net"
+            fromMe = $false
+            id = [guid]::NewGuid().ToString()
+        }
+        message = @{
+            conversation = $Message
+        }
+    }
+} | ConvertTo-Json -Depth 10
+
+Write-Host "Enviando webhook para $WebhookUrl"
+Write-Host "Payload:`n$payload`n"
+
+$response = curl -X POST $WebhookUrl `
+  -H "Content-Type: application/json" `
+  -H "X-Webhook-Token: $WebhookSecret" `
+  -d $payload `
+  -v
+
+Write-Host "Resposta:"
+Write-Host $response
+
+# Verificar logs no worker para ver se processou
+Write-Host "`nVerifique os logs do worker (Terminal 2) para ver o processamento do job."
+```
+
+Executar:
+
+```powershell
+# Terminal (com venv ativado)
+.\test-webhook.ps1
+
+# Ou com parâmetros customizados:
+.\test-webhook.ps1 -InstanceName rafael -Message "Qual o preço?" -FromNumber "5585988776655"
+```
+
+**O que acontece:**
+1. Webhook chega na API (`POST /webhooks/whatsapp`)
+2. API autentica com `X-Webhook-Token` (sem chamar Evolution)
+3. API persiste e enfileira job `processar_mensagem`
+4. Worker pega job, executa Roteador → Suporte → Resposta
+5. Worker tenta enviar resposta via Evolution: `POST /message/sendText/test-instance`
+   - Se a instância não está conectada, Evolution retorna erro (ex: status "close")
+   - Job falha e fica registrado em `messages.status_envio = falha`
+   - **Mas a conversa, intenção e resposta gerada já foram gravadas no banco**
+
+**Verificar no banco:**
+
+```sql
+-- Conectar como administrador ou tenant_session ativo
+SELECT correlation_id, remetente, conteudo, status_envio, intencao
+  FROM messages
+  WHERE tenant_id = (SELECT id FROM tenants WHERE slug = 'rafael')
+  ORDER BY criado_em DESC
+  LIMIT 5;
+```
+
+### 11.2 Caminho B: Mockar a Evolution inteira (para testes unitários/CI)
+
+Se você quer um teste **completamente isolado** sem nenhuma dependência (nem Evolution, nem dados reais no
+banco), usando pytest + mocking:
+
+#### 11.2.1 Script de teste (Python)
+
+Criar arquivo `tests/test_webhook_mock.py`:
+
+```python
+import json
+from datetime import datetime
+from unittest.mock import AsyncMock, patch
+import pytest
+
+from apps.api.webhooks.whatsapp import ProcessarMensagemRequest
+
+
+@pytest.mark.asyncio
+async def test_webhook_without_evolution():
+    """Testa webhook de chegada sem conectar Evolution ou WhatsApp real."""
+
+    # Simular payload de Evolution
+    webhook_payload = {
+        "events": [
+            {
+                "event": "messages.upsert",
+                "instance": "rafael",
+                "data": {
+                    "messages": [
+                        {
+                            "key": {
+                                "remoteJid": "5585998765432@s.whatsapp.net",
+                                "fromMe": False,
+                                "id": "3EB0605AF8B15CD4D15A26FFB3E5A6C8",
+                            },
+                            "messageTimestamp": int(datetime.utcnow().timestamp()),
+                            "pushName": "João Silva",
+                            "status": "PENDING",
+                            "message": {
+                                "conversation": "Qual é o horário de funcionamento?"
+                            },
+                        }
+                    ]
+                },
+            }
+        ]
+    }
+
+    # Mock da API do Plantão (endpoint webhook)
+    from fastapi.testclient import TestClient
+    from apps.api.main import app
+
+    client = TestClient(app)
+
+    # Mock do redis (enfileiramento)
+    with patch("apps.api.webhooks.whatsapp.enqueue") as mock_enqueue:
+        mock_enqueue.return_value = AsyncMock()
+
+        response = client.post(
+            "/webhooks/whatsapp",
+            json=webhook_payload,
+            headers={"X-Webhook-Token": "UWAEmLaO8hDpM--c1pD1kSgT9q8gThU-WcxVrzzr7cGL8OAgqe8uRY6FPJoCX-cs"},
+        )
+
+        assert response.status_code == 200
+        assert mock_enqueue.called
+
+    # Opcional: verificar que mensagem foi persistida
+    # session.query(Message).filter_by(instance="rafael").one()
+```
+
+Executar:
+
+```powershell
+pytest tests/test_webhook_mock.py -v
+```
+
+### 11.3 Caminho C: Docker mock da Evolution (container fake)
+
+Se você quer um container que simula a Evolution sem instalar a real:
+
+Criar `Dockerfile.evolution-mock`:
+
+```dockerfile
+FROM python:3.11-slim
+RUN pip install fastapi uvicorn
+COPY <<'EOF' /app.py
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
+
+app = FastAPI()
+
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
+@app.post("/instance/create")
+async def create_instance(body: dict, headers: dict = None):
+    instance_name = body.get("instanceName", "unknown")
+    return {
+        "instance": {
+            "instanceName": instance_name,
+            "status": "created",
+            "qrcode": None,
+            "apiKeys": [
+                {"apiKey": "mock-api-key-12345", "name": "padrão"}
+            ]
+        }
+    }
+
+@app.get("/instance/connectionState/{instance_name}")
+async def connection_state(instance_name: str):
+    # Simular instancia aberta mas sem realmente estar conectada
+    return {"instance": {"state": "closed"}}
+
+@app.get("/instance/connect/{instance_name}")
+async def connect(instance_name: str):
+    return {"qrcode": "mock-base64-encoded-qr-code"}
+
+@app.post("/webhook/set/{instance_name}")
+async def set_webhook(instance_name: str, body: dict):
+    return {"status": "ok", "webhook": body.get("webhook")}
+
+@app.post("/message/sendText/{instance_name}")
+async def send_text(instance_name: str, body: dict):
+    # Mock de envio bem-sucedido
+    return {
+        "status": "success",
+        "messageId": "mock-message-id-123"
+    }
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8080)
+EOF
+WORKDIR /
+CMD ["python", "/app.py"]
+```
+
+Subir:
+
+```powershell
+docker build -f Dockerfile.evolution-mock -t evolution-mock:latest .
+docker run -d -p 8080:8080 --name evolution-mock evolution-mock:latest
+
+# Testar
+curl http://localhost:8080/health
+```
+
+### 11.4 Resumo: qual caminho escolher?
+
+| Caminho | Caso de Uso | Setup | Realismo | Velocidade |
+|---|---|---|---|---|
+| **A (cURL manual)** | Dev local, debug rápido | Mínimo (só curl) | Alto | Rápido |
+| **B (pytest mock)** | CI/CD, testes de integração | Médio (pytest + conftest) | Médio | Muito rápido |
+| **C (Evolution mock)** | Dev isolado, sem internet | Médio (Docker) | Baixo | Rápido |
+
+**Recomendação para desenvolvimento:**
+1. Use o **Caminho A** (cuRL manual) enquanto desenvolve features localmente
+2. Integre o **Caminho B** (pytest) no seu CI para validações automáticas
+3. Use **Caminho C** apenas se a Evolution inteira ficar indisponível
 
 ## 11. Referências
 

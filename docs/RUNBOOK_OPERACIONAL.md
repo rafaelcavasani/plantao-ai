@@ -150,10 +150,16 @@ $env:MINHA_CLINICA_WEBHOOK_SECRET = "..."   # >= 32 caracteres
 ### 7.2 Criar, verificar e ativar
 
 ```powershell
-python -m scripts.tenants create    --file docs\exemplos\empresa-modelo.yml --operador rafael
+python -m scripts.tenants create    --file docs\exemplos\rafael.yml --operador rafael
 python -m scripts.tenants readiness minha-clinica --operador rafael
 python -m scripts.tenants test       minha-clinica --file docs\exemplos\empresa-modelo.yml --operador rafael
 python -m scripts.tenants activate   minha-clinica --operador rafael
+```
+
+Se caminho absoluto com espaços:
+
+```powershell
+python -m scripts.tenants create --file "C:\path\com espaço\rafael.yml" --operador rafael
 ```
 
 - `create`: idempotente — repetir não duplica nada; empresa já ativa continua ativa. Avança em 6 passos

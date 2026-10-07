@@ -1,0 +1,40 @@
+# Modelo de arquivo de onboarding de empresa (contracts/onboarding-file.md).
+#
+#   python -m scripts.tenants create --file docs/exemplos/empresa-modelo.yml --operador SEU_NOME
+#
+# O arquivo NAO tem segredos: as credenciais entram por NOME de variável de ambiente (`*_env` abaixo).
+# Repetir o comando é seguro: nada é duplicado e uma empresa já ativa continua ativa.
+# Campos omitidos em `configuracao` usam o padrão da plataforma na criação e não são tocados depois.
+
+slug: web-mock                     # obrigatório; ^[a-z0-9]+(-[a-z0-9]+)*$, 3 a 63 caracteres; não muda depois
+nome_empresa: "Web Mock"           # obrigatório; 2 a 255 caracteres
+nicho: teste                       # obrigatório
+plano: recepcionista               # opcional; padrão "recepcionista"
+
+configuracao:                      # opcional
+  tom_de_voz: "Cordial, acolhedor e direto. Trate o cliente por 'você'."
+  horario_funcionamento:           # valores no formato HH:MM-HH:MM
+    seg_sex: "08:00-18:00"
+    sabado: "08:00-12:00"
+  limite_desconto_percentual: 10.0 # 0 a 100
+  topicos_proibidos: ["garantia de resultado", "diagnóstico"]
+  confianca_minima_handoff: 0.7    # 0 a 1; abaixo disso a conversa vai para um humano
+  palavras_gatilho: ["processo", "procon", "cancelar tudo", "advogado", "reclamação"]
+  router_confidence_threshold: 0.6 # 0 a 1
+  min_similarity: 0.30             # 0 a 1; similaridade mínima para usar um trecho da base
+  handoff_ttl_minutos: 60          # 1 a 1440; quanto tempo o agente fica em silêncio após um repasse
+  limite_mensagens_por_minuto: 60  # 1 a 6000
+
+canal:                                        # obrigatório
+  tipo: whatsapp                              # único valor aceito nesta entrega
+  provedor: evolution                         # único valor aceito nesta entrega
+  instance_name: web-mock                     # único em toda a plataforma; instância de outra empresa é recusada
+  api_key_env: WEB_MOCK_EVOLUTION_API_KEY       # nome da variável com a chave de envio da instância
+  webhook_secret_env: WEB_MOCK_WEBHOOK_SECRET   # nome da variável com o segredo de entrega (>= 32 caracteres)
+
+documentos:                        # opcional; pasta relativa a este arquivo (.txt, .md, .pdf)
+  pasta: C:\Users\rafae\OneDrive\Documentos\Estudos\Engenharia de IA\plantao-ai\docs\web-mock
+
+teste_prontidao:                   # usado por `tenants test`
+  pergunta: "Qual o horário de sábado?"
+  esperado: ["08:00", "12:00"]     # termos que a resposta deve conter (comparação sem caixa nem acento)
